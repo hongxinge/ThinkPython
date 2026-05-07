@@ -1,31 +1,31 @@
 # ThinkPython 依赖包
-# 使用固定版本以确保生产环境稳定性
+# 兼容 Python 3.8+，包括 Python 3.13
 
 # Web框架
-fastapi==0.104.1
-uvicorn[standard]==0.24.0.post1
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
 
 # 数据库
-sqlalchemy==2.0.23
-aiomysql==0.2.0
-asyncpg==0.29.0
-alembic==1.13.0
+sqlalchemy>=2.0.36
+aiomysql>=0.2.0
+asyncpg>=0.30.0
+alembic>=1.14.0
 
 # 缓存
-redis==5.0.1
+redis>=5.2.0
 
 # JWT认证
-PyJWT==2.8.0
+PyJWT>=2.9.0
 
 # 数据验证
-pydantic==2.5.2
-pydantic-settings==2.1.0
+pydantic>=2.10.0
+pydantic-settings>=2.6.0
 
 # 环境变量
-python-dotenv==1.0.0
+python-dotenv>=1.0.1
 
 # 日志
-loguru==0.7.2
+loguru>=0.7.3
 
 # 可选: Memcached支持
 # pymemcache>=4.0.0

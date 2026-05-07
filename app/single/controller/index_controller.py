@@ -15,7 +15,7 @@ class IndexController(BaseController):
     def _setup_routes(self):
         @self.router.get("/", summary="首页")
         async def index():
-            return success_response(data={"message": "Welcome to ThinkPython!"})
+            return success_response(data="Welcome to ThinkPython!")
         
         @self.router.get("/info", summary="系统信息")
         async def info():

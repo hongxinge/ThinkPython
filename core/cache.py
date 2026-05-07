@@ -2,6 +2,8 @@
 缓存连接管理
 支持 Redis, Memory, Memcached
 """
+import time
+import json
 try:
     import redis.asyncio as aioredis
 except ImportError:
@@ -11,12 +13,32 @@ except ImportError:
         aioredis = None
 from typing import Any, Optional
 from config.cache import CACHE_CONFIG
+from loguru import logger
 
 cache_client = None
 
 
+def _serialize_value(value: Any) -> str:
+    """序列化值用于存储"""
+    if isinstance(value, str):
+        return value
+    return json.dumps(value, ensure_ascii=False, default=str)
+
+
+def _deserialize_value(value: Any) -> Any:
+    """反序列化缓存值"""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except (json.JSONDecodeError, TypeError):
+            return value
+    return value
+
+
 class MemoryCache:
-    """内存缓存实现"""
+    """内存缓存实现 - 支持TTL过期机制"""
     
     def __init__(self, max_size: int = 1000, ttl: int = 300):
         self._cache = {}
@@ -25,14 +47,30 @@ class MemoryCache:
     
     async def get(self, key: str) -> Optional[Any]:
         if key in self._cache:
-            return self._cache[key]["value"]
+            item = self._cache[key]
+            # 检查是否过期
+            if item["expire_at"] and time.time() > item["expire_at"]:
+                # 已过期，删除并返回None
+                del self._cache[key]
+                return None
+            return item["value"]
         return None
     
     async def set(self, key: str, value: Any, ex: Optional[int] = None) -> bool:
+        # 如果缓存已满，删除最旧的一个
         if len(self._cache) >= self._max_size:
             oldest_key = next(iter(self._cache))
             del self._cache[oldest_key]
-        self._cache[key] = {"value": value}
+        
+        # 计算过期时间
+        expire_seconds = ex if ex is not None else self._ttl
+        expire_at = time.time() + expire_seconds if expire_seconds > 0 else None
+        
+        self._cache[key] = {
+            "value": value,
+            "expire_at": expire_at,
+            "created_at": time.time()
+        }
         return True
     
     async def delete(self, key: str) -> bool:
@@ -93,7 +131,8 @@ async def get_cache(key: str) -> Optional[Any]:
     if cache_client is None:
         return None
     full_key = f"{CACHE_CONFIG['prefix']}{key}"
-    return await cache_client.get(full_key)
+    value = await cache_client.get(full_key)
+    return _deserialize_value(value)
 
 
 async def set_cache(key: str, value: Any, ttl: Optional[int] = None) -> bool:
@@ -102,7 +141,8 @@ async def set_cache(key: str, value: Any, ttl: Optional[int] = None) -> bool:
         return False
     full_key = f"{CACHE_CONFIG['prefix']}{key}"
     expire = ttl or CACHE_CONFIG["default_ttl"]
-    return await cache_client.set(full_key, value, ex=expire)
+    serialized_value = _serialize_value(value)
+    return await cache_client.set(full_key, serialized_value, ex=expire)
 
 
 async def delete_cache(key: str) -> bool:

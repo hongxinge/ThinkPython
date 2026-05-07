@@ -1,9 +1,12 @@
 """
 异常处理
 """
+from typing import Any
 from fastapi import Request
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
+from loguru import logger
+from config.app import APP_CONFIG
 
 
 class AppException(Exception):
@@ -46,6 +49,7 @@ class ValidationException(AppException):
 
 async def app_exception_handler(request: Request, exc: AppException):
     """应用异常处理器"""
+    logger.warning(f"应用异常: {exc.message} [path: {request.url.path}]")
     return JSONResponse(
         status_code=exc.code,
         content={
@@ -64,6 +68,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
             "field": ".".join(str(loc) for loc in error["loc"]),
             "message": error["msg"],
         })
+    logger.warning(f"参数验证失败: {errors} [path: {request.url.path}]")
     return JSONResponse(
         status_code=422,
         content={
@@ -76,11 +81,21 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 
 async def global_exception_handler(request: Request, exc: Exception):
     """全局异常处理器"""
+    # 生产环境不暴露详细错误信息，防止信息泄露
+    logger.error(f"服务器内部错误: {str(exc)} [path: {request.url.path}]", exc_info=True)
+    
+    if APP_CONFIG["debug"]:
+        # 开发环境返回详细错误信息
+        message = f"服务器内部错误: {str(exc)}"
+    else:
+        # 生产环境返回通用错误信息
+        message = "服务器内部错误"
+    
     return JSONResponse(
         status_code=500,
         content={
             "code": 500,
-            "message": f"服务器内部错误: {str(exc)}",
+            "message": message,
             "data": None,
         },
     )

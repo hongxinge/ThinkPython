@@ -40,6 +40,9 @@ async def close_database():
 
 async def get_db() -> AsyncSession:
     """获取数据库会话 (用于依赖注入)"""
+    if async_session is None:
+        raise Exception("数据库连接未初始化")
+    
     async with async_session() as session:
         try:
             yield session

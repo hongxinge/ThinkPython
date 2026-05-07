@@ -1,14 +1,15 @@
 """
 助手函数 - 认证工具
 """
+import os
 import jwt
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any
-from config.app import APP_CONFIG
 
-JWT_SECRET = "your-secret-key-change-this-in-production"
-JWT_ALGORITHM = "HS256"
-JWT_EXPIRE_HOURS = 24
+# 从环境变量读取JWT配置，避免硬编码
+JWT_SECRET = os.getenv("JWT_SECRET", "your-secret-key-change-this-in-production")
+JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
+JWT_EXPIRE_HOURS = int(os.getenv("JWT_EXPIRE_HOURS", "24"))
 
 
 def create_token(user_id: int, extra_data: Optional[Dict] = None) -> str:

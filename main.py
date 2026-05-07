@@ -4,9 +4,10 @@
 import os
 from fastapi import FastAPI
 from contextlib import asynccontextmanager
+from loguru import logger
 
 from config.app import APP_CONFIG
-from middleware import setup_cors
+from middleware import setup_cors, request_log_middleware
 from core.database import init_database, close_database
 from core.cache import init_cache, close_cache
 from core.exception import (
@@ -23,20 +24,20 @@ from router import get_router_by_mode
 async def lifespan(app: FastAPI):
     """应用生命周期管理"""
     # 启动时执行
-    print(f"🚀 {APP_CONFIG['name']} v{APP_CONFIG['version']} 启动中...")
-    print(f"📦 模块模式: {APP_CONFIG['module_mode']}")
+    logger.info(f"🚀 {APP_CONFIG['name']} v{APP_CONFIG['version']} 启动中...")
+    logger.info(f"📦 模块模式: {APP_CONFIG['module_mode']}")
     
     await init_database()
     await init_cache()
     
-    print("✅ 数据库和缓存初始化完成")
+    logger.info("✅ 数据库和缓存初始化完成")
     
     yield
     
     # 关闭时执行
     await close_database()
     await close_cache()
-    print("👋 应用已关闭")
+    logger.info("👋 应用已关闭")
 
 
 def create_app() -> FastAPI:
@@ -52,6 +53,7 @@ def create_app() -> FastAPI:
     
     # 配置中间件
     setup_cors(app)
+    app.middleware("http")(request_log_middleware)
     
     # 注册异常处理器
     app.add_exception_handler(AppException, app_exception_handler)
@@ -63,7 +65,7 @@ def create_app() -> FastAPI:
     app.include_router(main_router)
     
     # 健康检查
-    @app.get("/health")
+    @app.get("/health", summary="健康检查")
     async def health_check():
         return {
             "code": 200,

@@ -7,6 +7,7 @@ import importlib
 import inspect
 from pathlib import Path
 from fastapi import APIRouter
+from loguru import logger
 from config.app import APP_CONFIG
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -48,8 +49,10 @@ def register_multi_modules(main_router: APIRouter):
 def _register_controllers_from_dir(main_router: APIRouter, controller_dir: Path, prefix: str, module_path: str):
     """从目录自动注册控制器"""
     if not controller_dir.exists():
+        logger.warning(f"控制器目录不存在: {controller_dir}")
         return
     
+    registered_count = 0
     for file_path in controller_dir.glob("*.py"):
         if file_path.name.startswith("_"):
             continue
@@ -57,13 +60,17 @@ def _register_controllers_from_dir(main_router: APIRouter, controller_dir: Path,
         full_module_name = f"{module_path}.controller.{file_path.stem}"
         try:
             module = importlib.import_module(full_module_name)
-            _register_controller_routes(main_router, module, prefix)
+            count = _register_controller_routes(main_router, module, prefix)
+            registered_count += count
         except Exception as e:
-            print(f"Warning: Failed to register controller {full_module_name}: {e}")
+            logger.error(f"注册控制器失败 {full_module_name}: {e}")
+    
+    logger.info(f"注册完成: {registered_count} 个控制器从 {controller_dir.name}")
 
 
-def _register_controller_routes(main_router: APIRouter, module, prefix: str = ""):
-    """从模块中注册控制器路由"""
+def _register_controller_routes(main_router: APIRouter, module, prefix: str = "") -> int:
+    """从模块中注册控制器路由，返回注册的控制器数量"""
+    count = 0
     for name, obj in inspect.getmembers(module, inspect.isclass):
         if hasattr(obj, "router") and hasattr(obj, "__module__"):
             if module.__name__ == obj.__module__:
@@ -73,3 +80,6 @@ def _register_controller_routes(main_router: APIRouter, module, prefix: str = ""
                     prefix=prefix,
                     tags=[name],
                 )
+                count += 1
+                logger.debug(f"注册控制器: {prefix}/{name}")
+    return count

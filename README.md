@@ -39,11 +39,11 @@ ThinkPython 是一套**开箱即用**的企业级 Python Web 框架。它的目�
 
 ```bash
 # 方式1：使用 Git 克隆
-git clone https://github.com/hongxinge/ThinkPython.git
+git clone https://gitee.com/hongxinge/think-python.git
 cd ThinkPython
 
 # 方式2：直接下载 ZIP 并解压
-# 访问 https://github.com/hongxinge/ThinkPython 下载
+# 访问 https://gitee.com/hongxinge/think-python 下载
 ```
 
 ### 第2步：安装依赖

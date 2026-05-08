@@ -7,7 +7,7 @@ import os
 
 CACHE_CONFIG = {
     # 缓存类型: redis, memory, memcached
-    "type": os.getenv("CACHE_TYPE", "redis"),
+    "type": os.getenv("CACHE_TYPE", "memory"),
     
     # 是否启用缓存
     "enabled": os.getenv("CACHE_ENABLED", "True").lower() == "true",

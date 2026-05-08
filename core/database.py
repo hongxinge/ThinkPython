@@ -1,6 +1,7 @@
 """
 数据库连接管理
 """
+from typing import AsyncGenerator
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import declarative_base
 from config.database import DATABASE_CONFIG, get_database_url
@@ -38,10 +39,14 @@ async def close_database():
         await engine.dispose()
 
 
-async def get_db() -> AsyncSession:
-    """获取数据库会话 (用于依赖注入)"""
+async def get_db() -> AsyncGenerator[AsyncSession, None]:
+    """获取数据库会话 (用于 FastAPI 依赖注入)
+    
+    FastAPI 原生支持异步生成器，无需 @asynccontextmanager
+    使用方式: db: AsyncSession = Depends(get_db)
+    """
     if async_session is None:
-        raise Exception("数据库连接未初始化")
+        raise Exception("数据库连接未初始化，请检查数据库配置")
     
     async with async_session() as session:
         try:

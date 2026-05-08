@@ -55,10 +55,12 @@ pip-delete-this-directory.txt
 *.db
 *.sqlite3
 data/
+!data/.gitkeep
 
 # Logs
 logs/
 *.log
+!logs/.gitkeep
 
 # OS
 .DS_Store

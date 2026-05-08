@@ -7,8 +7,12 @@ ThinkPython CLI 命令行工具
 import sys
 import argparse
 from pathlib import Path
+from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent
+
+# 加载 .env 文件
+load_dotenv(BASE_DIR / ".env")
 
 
 class Command:

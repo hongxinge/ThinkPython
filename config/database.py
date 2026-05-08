@@ -8,7 +8,7 @@ from pathlib import Path
 
 DATABASE_CONFIG = {
     # 数据库类型: mysql, postgresql, sqlite, mssql
-    "type": os.getenv("DB_TYPE", "mysql"),
+    "type": os.getenv("DB_TYPE", "sqlite"),
     
     # 是否启用数据库
     "enabled": os.getenv("DB_ENABLED", "True").lower() == "true",

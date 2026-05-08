@@ -879,7 +879,7 @@ ThinkPython 采用 [MIT License](LICENSE) 开源协议，完全免费，可商�
 ## 💬 支持与反馈
 
 - 📖 详细文档：[docs/](docs/)
-- 🐛 问题反馈：[GitHub Issues](https://github.com/hongxinge/ThinkPython/issues)
+- 🐛 问题反馈：[gitee Issues](https://gitee.com/hongxinge/think-python/issues)
 - ⭐ 觉得好用请 Star 支持，让更多人看到！
 
 ---

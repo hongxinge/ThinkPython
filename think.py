@@ -1,44 +1,93 @@
 #!/usr/bin/env python
 """
 ThinkPython CLI 命令行工具
-类似 ThinkPHP 的 think 命令
-用法: python think.py <command> [arguments]
+
+本模块提供类似 ThinkPHP 的 think 命令，用于快速开发和管理项目。
+通过命令行可以执行以下操作：
+- run: 启动开发服务器
+- make-controller: 快速创建控制器文件
+- make-model: 快速创建数据模型文件
+- make-service: 快速创建服务文件
+- make-module: 快速创建完整模块（含 controller/service/model 目录）
+- db-migrate: 执行数据库迁移（创建表结构）
+- list-routes: 列出所有已注册的路由
+
+用法:
+    python think.py <command> [arguments]
+
+示例:
+    python think.py run                          # 启动开发服务器
+    python think.py run --port 9000              # 指定端口启动
+    python think.py make-controller User          # 创建 User 控制器
+    python think.py make-model Product            # 创建 Product 模型
+    python think.py make-service Order            # 创建 Order 服务
+    python think.py make-module blog              # 创建 blog 模块
+    python think.py db-migrate                    # 执行数据库迁移
+    python think.py list-routes                   # 列出所有路由
 """
 import sys
 import argparse
 from pathlib import Path
 from dotenv import load_dotenv
 
+# 项目根目录（think.py 所在目录）
 BASE_DIR = Path(__file__).resolve().parent
 
-# 加载 .env 文件
+# 加载 .env 环境变量文件
 load_dotenv(BASE_DIR / ".env")
 
 
 class Command:
-    """基础命令类"""
+    """CLI 命令基类
+    
+    所有 CLI 命令都应继承此类，实现自己的 handle() 方法。
+    每个命令有名称和描述，用于在 help 信息中展示。
+    """
     
     def __init__(self, name: str, description: str = ""):
+        """初始化命令
+        
+        Args:
+            name: 命令名称，如 "run"、"make-controller"
+            description: 命令描述，用于 help 信息
+        """
         self.name = name
         self.description = description
     
     def handle(self, args: argparse.Namespace) -> None:
-        """执行命令"""
+        """执行命令的逻辑
+        
+        子类必须实现此方法，处理命令的具体逻辑。
+        
+        Args:
+            args: 命令行解析后的参数对象
+        """
         raise NotImplementedError
 
 
 class RunCommand(Command):
-    """启动服务命令"""
+    """启动开发服务器命令
+    
+    使用 uvicorn 启动 FastAPI 应用，支持自定义端口和热重载。
+    等同于直接运行 python main.py。
+    """
     
     def __init__(self):
         super().__init__("run", "启动开发服务器")
     
     def handle(self, args: argparse.Namespace) -> None:
+        """执行启动服务器命令
+        
+        Args:
+            args: 包含 --host、--port、--no-reload 参数的命令行对象
+        """
         import uvicorn
         from config.app import APP_CONFIG
         
+        # 从命令行参数或配置中获取服务器设置
         host = getattr(args, "host", "0.0.0.0")
         port = getattr(args, "port", 8000)
+        # 如果传入了 --no-reload 则关闭热重载，否则根据 debug 配置决定
         reload = getattr(args, "reload", APP_CONFIG["debug"])
         
         print(f"🚀 {APP_CONFIG['name']} v{APP_CONFIG['version']} 启动中...")
@@ -46,23 +95,33 @@ class RunCommand(Command):
         print(f"📖 API文档: http://{host}:{port}/docs")
         
         uvicorn.run(
-            "main:app",
+            "main:app",  # 应用模块路径
             host=host,
             port=port,
-            reload=reload,
+            reload=reload,  # 热重载：文件修改后自动重启
         )
 
 
 class MakeControllerCommand(Command):
-    """创建控制器命令"""
+    """创建控制器文件命令
+    
+    根据提供的名称和模块，在对应的 controller 目录下生成
+    包含基础 CRUD 路由的控制器模板文件。
+    """
     
     def __init__(self):
         super().__init__("make-controller", "创建控制器文件")
     
     def handle(self, args: argparse.Namespace) -> None:
+        """执行创建控制器命令
+        
+        Args:
+            args: 包含 name 和 --module 参数的命令行对象
+        """
         name = args.name
         module = getattr(args, "module", None)
         
+        # 如果未指定模块，根据配置自动选择
         if not module:
             from config.app import APP_CONFIG
             if APP_CONFIG["module_mode"] == "multi":
@@ -70,16 +129,20 @@ class MakeControllerCommand(Command):
             else:
                 module = "single"
         
+        # 创建控制器目录（如果不存在）
         controller_dir = BASE_DIR / "app" / module / "controller"
         controller_dir.mkdir(parents=True, exist_ok=True)
         
+        # 生成文件名和路径
         file_name = f"{name.lower()}_controller.py"
         file_path = controller_dir / file_name
         
+        # 检查文件是否已存在
         if file_path.exists():
             print(f"❌ 控制器已存在: {file_path}")
             return
         
+        # 类名使用 PascalCase
         class_name = f"{name}Controller"
         
         content = f'''"""
@@ -137,15 +200,25 @@ class {class_name}(BaseController):
 
 
 class MakeModelCommand(Command):
-    """创建模型命令"""
+    """创建数据模型文件命令
+    
+    在指定模块的 model 目录下生成 ORM 模型模板文件，
+    继承 BaseModel 并包含基础字段定义。
+    """
     
     def __init__(self):
         super().__init__("make-model", "创建数据模型文件")
     
     def handle(self, args: argparse.Namespace) -> None:
+        """执行创建模型命令
+        
+        Args:
+            args: 包含 name 和 --module 参数的命令行对象
+        """
         name = args.name
         module = getattr(args, "module", None)
         
+        # 如果未指定模块，根据配置自动选择
         if not module:
             from config.app import APP_CONFIG
             if APP_CONFIG["module_mode"] == "multi":
@@ -153,9 +226,11 @@ class MakeModelCommand(Command):
             else:
                 module = "single"
         
+        # 创建模型目录
         model_dir = BASE_DIR / "app" / module / "model"
         model_dir.mkdir(parents=True, exist_ok=True)
         
+        # 生成文件名（表名默认加 s 后缀，如 User -> users）
         file_name = f"{name.lower()}_model.py"
         file_path = model_dir / file_name
         
@@ -163,7 +238,7 @@ class MakeModelCommand(Command):
             print(f"❌ 模型已存在: {file_path}")
             return
         
-        table_name = name.lower() + "s"
+        table_name = name.lower() + "s"  # 表名默认加复数后缀
         
         content = f'''"""
 {name} 模型
@@ -187,15 +262,25 @@ class {name}(BaseModel):
 
 
 class MakeServiceCommand(Command):
-    """创建服务命令"""
+    """创建服务文件命令
+    
+    在指定模块的 service 目录下生成继承 BaseService 的服务模板文件，
+    包含基础 CRUD 方法骨架。
+    """
     
     def __init__(self):
         super().__init__("make-service", "创建服务文件")
     
     def handle(self, args: argparse.Namespace) -> None:
+        """执行创建服务命令
+        
+        Args:
+            args: 包含 name 和 --module 参数的命令行对象
+        """
         name = args.name
         module = getattr(args, "module", None)
         
+        # 如果未指定模块，根据配置自动选择
         if not module:
             from config.app import APP_CONFIG
             if APP_CONFIG["module_mode"] == "multi":
@@ -203,9 +288,11 @@ class MakeServiceCommand(Command):
             else:
                 module = "single"
         
+        # 创建服务目录
         service_dir = BASE_DIR / "app" / module / "service"
         service_dir.mkdir(parents=True, exist_ok=True)
         
+        # 生成文件名
         file_name = f"{name.lower()}_service.py"
         file_path = service_dir / file_name
         
@@ -259,29 +346,38 @@ class {name}Service(BaseService):
 
 
 class MakeModuleCommand(Command):
-    """创建模块命令"""
+    """创建模块命令
+    
+    在 app/ 目录下创建完整的模块结构（controller/service/model 目录 + __init__.py），
+    并自动更新 .env 中的 ENABLED_MODULES 配置。
+    """
     
     def __init__(self):
         super().__init__("make-module", "创建新模块")
     
     def handle(self, args: argparse.Namespace) -> None:
-        name = args.name.lower()
+        """执行创建模块命令
+        
+        Args:
+            args: 包含 name 参数的命令行对象
+        """
+        name = args.name.lower()  # 模块名统一小写
         module_dir = BASE_DIR / "app" / name
         
         if module_dir.exists():
             print(f"❌ 模块已存在: {module_dir}")
             return
         
-        # 创建模块目录结构
+        # 创建模块目录结构：controller/、service/、model/
         (module_dir / "controller").mkdir(parents=True)
         (module_dir / "service").mkdir(parents=True)
         (module_dir / "model").mkdir(parents=True)
         
-        # 创建 __init__.py
+        # 在每个目录下创建空的 __init__.py，使其成为 Python 包
         for d in [module_dir, module_dir / "controller", module_dir / "service", module_dir / "model"]:
             (d / "__init__.py").write_text("")
         
-        # 更新 .env 文件
+        # 更新 .env 文件，将新模块添加到 ENABLED_MODULES 配置中
         env_file = BASE_DIR / ".env"
         if env_file.exists():
             content = env_file.read_text(encoding="utf-8")
@@ -297,17 +393,31 @@ class MakeModuleCommand(Command):
 
 
 class DBMigrateCommand(Command):
-    """数据库迁移命令"""
+    """数据库迁移命令
+    
+    连接数据库并自动创建所有 ORM 模型对应的数据表。
+    基于 SQLAlchemy 的 Base.metadata.create_all() 实现。
+    
+    注意：此命令只创建新表，不会修改已存在的表结构。
+    如果需要修改表结构，请使用 Alembic 等数据库迁移工具。
+    """
     
     def __init__(self):
         super().__init__("db-migrate", "执行数据库迁移")
     
     def handle(self, args: argparse.Namespace) -> None:
+        """执行数据库迁移
+        
+        Args:
+            args: 命令行参数对象（此命令无需额外参数）
+        """
         import asyncio
         from core.database import init_database, Base, engine
         
         async def run_migration():
+            # 初始化数据库连接
             await init_database()
+            # 创建所有模型对应的数据表（已存在的表会被跳过）
             async with engine.begin() as conn:
                 await conn.run_sync(Base.metadata.create_all)
             print("✅ 数据库迁移完成")
@@ -319,12 +429,21 @@ class DBMigrateCommand(Command):
 
 
 class ListRoutesCommand(Command):
-    """列出所有路由命令"""
+    """列出所有路由命令
+    
+    加载 FastAPI 应用并打印所有已注册的 HTTP 路由，
+    包括请求方法、路径和描述信息。
+    """
     
     def __init__(self):
         super().__init__("list-routes", "列出所有已注册的路由")
     
     def handle(self, args: argparse.Namespace) -> None:
+        """执行列出路由命令
+        
+        Args:
+            args: 命令行参数对象（此命令无需额外参数）
+        """
         from main import app
         
         print(f"\n{'方法':<10} {'路径':<40} {'描述':<30}")
@@ -332,19 +451,35 @@ class ListRoutesCommand(Command):
         
         for route in app.routes:
             if hasattr(route, "methods"):
+                # 排除 HEAD 和 OPTIONS（FastAPI 自动生成的选项请求）
                 methods = ", ".join(route.methods - {"HEAD", "OPTIONS"})
                 path = route.path
                 name = getattr(route, "name", "")
                 summary = ""
+                # 如果路由有 summary 属性（从 docstring 生成），则显示
                 if hasattr(route, "summary") and route.summary:
                     summary = route.summary
                 print(f"{methods:<10} {path:<40} {summary:<30}")
         
+        # 统计路由总数（排除 HEAD/OPTIONS）
         print(f"\n共 {len([r for r in app.routes if hasattr(r, 'methods')])} 个路由\n")
 
 
 def create_parser() -> argparse.ArgumentParser:
-    """创建命令行参数解析器"""
+    """创建命令行参数解析器
+    
+    配置所有可用命令及其参数：
+    - run: 启动开发服务器
+    - make-controller: 创建控制器文件
+    - make-model: 创建数据模型文件
+    - make-service: 创建服务文件
+    - make-module: 创建完整模块
+    - db-migrate: 执行数据库迁移
+    - list-routes: 列出所有路由
+    
+    Returns:
+        argparse.ArgumentParser: 配置好的命令行解析器
+    """
     parser = argparse.ArgumentParser(
         prog="think",
         description="ThinkPython CLI 命令行工具",
@@ -387,15 +522,16 @@ def create_parser() -> argparse.ArgumentParser:
 
 
 def main():
-    """CLI入口"""
+    """CLI 入口函数 - 解析命令行参数并执行对应命令"""
     parser = create_parser()
     args = parser.parse_args()
     
     if not args.command:
+        # 未指定命令时打印帮助信息
         parser.print_help()
         return
     
-    # 命令映射
+    # 命令映射表：命令名称 -> 命令类
     commands = {
         "run": RunCommand,
         "make-controller": MakeControllerCommand,

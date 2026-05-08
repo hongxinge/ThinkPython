@@ -450,6 +450,60 @@ python think.py make-module order
 | api 模块的 ProductController | `/api/product/list` |
 | order 模块的 OrderController | `/order/order/list` |
 
+### 教程5：使用公共模块（common）
+
+在多模块项目中，多个模块可能需要共用相同的代码。`app/common/` 就是用来存放这些跨模块共享代码的地方。
+
+#### 为什么要用 common 模块？
+
+假设你有一个后台管理系统（admin）和一个对外API（api），它们都需要操作用户数据：
+
+```
+❌ 不用 common（错误做法）：
+app/admin/model/user_model.py    ← admin 定义了一个 User 模型
+app/api/model/user_model.py      ← api 又定义了一个相同的 User 模型（重复代码！）
+
+✅ 使用 common（正确做法）：
+app/common/model/user_model.py   ← 所有模块共用的 User 模型
+app/admin/service/user_service.py ← admin 引入: from app.common.model.user_model import User
+app/api/service/user_service.py   ← api 引入: from app.common.model.user_model import User
+```
+
+#### common 模块内置示例
+
+| 文件 | 说明 |
+|------|------|
+| `common/model/user_model.py` | 公共用户模型，所有模块共用 |
+| `common/service/auth_service.py` | 公共认证服务，处理登录验证 |
+| `common/controller/base_auth_controller.py` | 需要登录的控制器基类 |
+
+#### 使用示例：创建一个需要登录的接口
+
+```python
+# 在你的控制器中继承 BaseAuthController
+from app.common.controller.base_auth_controller import BaseAuthController
+from fastapi import Depends
+
+class ProfileController(BaseAuthController):
+    """用户个人中心控制器"""
+    
+    def __init__(self):
+        super().__init__()
+        self._setup_routes()
+    
+    def _setup_routes(self):
+        @self.router.get("/profile", summary="获取个人信息")
+        async def get_profile(user_id: int = Depends(self.get_current_user_id)):
+            # user_id 已自动从 Token 中解析出来
+            return self.success(data={"user_id": user_id})
+```
+
+请求时需要在 Header 中携带 Token：
+```bash
+curl http://localhost:8000/profile \
+  -H "Authorization: Bearer eyJhbGciOi..."
+```
+
 ---
 
 ## 🏗️ 项目结构
@@ -457,6 +511,10 @@ python think.py make-module order
 ```
 ThinkPython/
 ├── app/                          # 📁 应用目录（你主要在这里写代码）
+│   ├── common/                   #   📌 公共模块（跨模块共享代码）
+│   │   ├── controller/           #     公共控制器（如：BaseAuthController）
+│   │   ├── service/              #     公共服务（如：AuthService、SmsService）
+│   │   └── model/                #     公共模型（如：User 模型，多模块共用）
 │   ├── single/                   #   单模块模式（默认）
 │   │   ├── controller/           #     控制器层：处理HTTP请求
 │   │   ├── service/              #     服务层：业务逻辑

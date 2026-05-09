@@ -3,12 +3,9 @@ __pycache__/
 *.py[cod]
 *$py.class
 
-# 宣传物料（不上传到仓库）
-宣传文案.md
-head-image.png
-head-image.html
-generate_image.py
-ThinkPython.png
+# 宣传物料文件夹内容（不上传到仓库，但保留文件夹结构）
+promotional/*
+!promotional/README.md
 
 # C extensions
 *.so

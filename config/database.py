@@ -90,8 +90,8 @@ def get_database_url(config: dict = None) -> str:
     db_type = cfg["type"]
     
     if db_type == "sqlite":
-        # SQLite 使用本地文件路径，三个斜杠 /// 表示绝对路径
-        return f"sqlite:///{cfg['sqlite_path']}"
+        # SQLite 使用 aiosqlite 异步驱动，/// 表示绝对路径
+        return f"sqlite+aiosqlite:///{cfg['sqlite_path']}"
     elif db_type == "mysql":
         # MySQL 使用 aiomysql 异步驱动
         return f"mysql+aiomysql://{cfg['username']}:{cfg['password']}@{cfg['host']}:{cfg['port']}/{cfg['database']}?charset={cfg['charset']}"

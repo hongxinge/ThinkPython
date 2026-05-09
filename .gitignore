@@ -3,6 +3,13 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+# 宣传物料（不上传到仓库）
+宣传文案.md
+head-image.png
+head-image.html
+generate_image.py
+ThinkPython.png
+
 # C extensions
 *.so
 

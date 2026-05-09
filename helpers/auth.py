@@ -305,3 +305,20 @@ async def require_auth(
         username=payload.get("username"),
         payload=payload,
     )
+
+
+# ==============================
+# 向后兼容别名
+# ==============================
+
+def generate_token(user_id: int, username: Optional[str] = None) -> str:
+    """生成 JWT Token（向后兼容别名）"""
+    extra = {}
+    if username:
+        extra["username"] = username
+    return create_token(user_id, extra_data=extra)
+
+
+def verify_token(token: str) -> bool:
+    """验证 Token 是否有效（向后兼容别名）"""
+    return decode_token(token) is not None

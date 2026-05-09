@@ -27,6 +27,7 @@ ThinkPython CLI 命令行工具
 """
 import sys
 import argparse
+import asyncio
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -345,6 +346,452 @@ class {name}Service(BaseService):
         print(f"✅ 服务创建成功: {file_path}")
 
 
+class MakeCrudCommand(Command):
+    """根据数据库表结构一键生成 CRUD 三层代码
+    
+    连接数据库读取指定表的结构，自动生成：
+    - Model: SQLAlchemy ORM 模型，包含字段定义、类型、注释
+    - Controller: 包含完整 CRUD 路由 + Pydantic 请求模型
+    - Service: 包含完整增删改查业务逻辑
+    
+    生成的代码可直接使用，开发者只需修改特定业务逻辑。
+    """
+    
+    def __init__(self):
+        super().__init__("make-crud", "根据数据库表生成 CRUD 代码")
+    
+    def handle(self, args: argparse.Namespace) -> None:
+        """执行 CRUD 生成命令"""
+        table_name = args.table.lower()
+        module = getattr(args, "module", None)
+        
+        if not module:
+            from config.app import APP_CONFIG
+            if APP_CONFIG["module_mode"] == "multi":
+                module = APP_CONFIG["default_module"]
+            else:
+                module = "single"
+        
+        # 确定输出目录
+        model_dir = BASE_DIR / "app" / module / "model"
+        controller_dir = BASE_DIR / "app" / module / "controller"
+        service_dir = BASE_DIR / "app" / module / "service"
+        
+        for d in [model_dir, controller_dir, service_dir]:
+            d.mkdir(parents=True, exist_ok=True)
+        
+        # 连接数据库读取表结构
+        async def generate():
+            from core.inspector import DatabaseInspector
+            
+            inspector = DatabaseInspector()
+            await inspector.connect()
+            
+            # 检查表是否存在
+            tables = await inspector.get_tables()
+            if table_name not in tables:
+                print(f"❌ 表 '{table_name}' 不存在于数据库中")
+                print(f"   可用表: {', '.join(tables)}")
+                await inspector.close()
+                return False
+            
+            # 获取表结构
+            table_info = await inspector.get_table_info(table_name)
+            
+            # 获取字段注释（MySQL）
+            col_comments = await inspector.get_column_comments_mysql(table_name)
+            for col in table_info.columns:
+                if col.name in col_comments:
+                    col.comment = col_comments[col.name]
+            
+            await inspector.close()
+            
+            # 生成类名
+            class_name = self._to_pascal_case(table_name)
+            model_name = f"{class_name}Model"
+            service_name = f"{class_name}Service"
+            controller_name = f"{class_name}Controller"
+            request_name = f"{class_name}Request"
+            update_name = f"{class_name}UpdateRequest"
+            
+            # 生成 Model
+            self._generate_model(model_dir, model_name, table_info, class_name)
+            
+            # 生成 Controller
+            self._generate_controller(
+                controller_dir, controller_name, class_name, 
+                request_name, update_name, table_info, module
+            )
+            
+            # 生成 Service
+            self._generate_service(
+                service_dir, service_name, class_name, model_name, module, table_info
+            )
+            
+            print(f"\n✅ CRUD 代码生成成功！")
+            print(f"   Model:      {model_dir / f'{table_name}_model.py'}")
+            print(f"   Controller: {controller_dir / f'{table_name.lower()}_controller.py'}")
+            print(f"   Service:    {service_dir / f'{table_name.lower()}_service.py'}")
+            print(f"\n💡 下一步: python think.py db-migrate")
+            return True
+        
+        return asyncio.run(generate())
+    
+    def _to_pascal_case(self, name: str) -> str:
+        """转换为 PascalCase"""
+        parts = name.replace("_", " ").replace("-", " ").split()
+        return "".join(p.capitalize() for p in parts)
+    
+    def _generate_model(self, model_dir: Path, model_name: str, table_info, class_name: str) -> None:
+        """生成 Model 文件"""
+        columns_code = []
+        primary_key_col = None
+        
+        has_datetime_default = False
+        
+        for col in table_info.columns:
+            if col.is_primary:
+                primary_key_col = col.name
+                continue  # 跳过主键（BaseModel 自带 id）
+            
+            # 构建 SQLAlchemy Column 定义
+            col_type = self._build_sqlalchemy_type(col)
+            nullable_str = f"nullable={str(col.nullable).lower()}" if col.nullable is not None else ""
+            default_str = self._build_default(col)
+            comment_str = f'comment="{col.comment}"' if col.comment else ""
+            
+            if "func.now()" in default_str:
+                has_datetime_default = True
+            
+            parts = [col_type]
+            if nullable_str:
+                parts.append(nullable_str)
+            if default_str:
+                parts.append(default_str)
+            if comment_str:
+                parts.append(comment_str)
+            
+            columns_code.append(f"    {col.name} = Column({', '.join(parts)})")
+        
+        columns_str = "\n".join(columns_code)
+        
+        imports = "Column, String, Integer, Text, DateTime, Float, Boolean, Numeric, Date, Time, BigInteger, SmallInteger, LargeBinary, JSON"
+        if has_datetime_default:
+            imports += ", func"
+        
+        content = f'''"""
+{class_name} 模型
+"""
+from sqlalchemy import {imports}
+from core.base_model import BaseModel
+
+
+class {model_name}(BaseModel):
+    """{class_name}模型"""
+    
+    __tablename__ = "{table_info.name}"
+    
+{columns_str}
+'''
+        
+        file_path = model_dir / f"{table_info.name}_model.py"
+        file_path.write_text(content, encoding="utf-8")
+    
+    def _build_sqlalchemy_type(self, col) -> str:
+        """构建 SQLAlchemy 类型定义"""
+        sa_type = col.sqlalchemy_type
+        
+        if sa_type == "String" and col.max_length:
+            return f"String({col.max_length})"
+        elif sa_type == "Numeric":
+            return "Numeric(10, 2)"
+        
+        return sa_type
+    
+    def _build_default(self, col) -> str:
+        """构建默认值表达式"""
+        if col.default is None:
+            return ""
+        
+        default_val = str(col.default)
+        
+        # 处理特殊默认值
+        if default_val.lower() in ("null",):
+            return ""
+        elif default_val.lower() == "current_timestamp":
+            return "server_default=func.now()"
+        elif default_val.startswith("nextval("):  # PostgreSQL 序列
+            return ""
+        
+        # 尝试转换为 Python 类型
+        try:
+            if col.python_type == "int":
+                return f"default={int(default_val)}"
+            elif col.python_type == "float":
+                return f"default={float(default_val)}"
+            elif col.python_type == "bool":
+                return f"default={default_val.lower() == 'true' or default_val == '1'}"
+            else:
+                return f"default='{default_val}'"
+        except ValueError:
+            return f"default='{default_val}'"
+    
+    def _generate_controller(
+        self, controller_dir: Path, controller_name: str, class_name: str,
+        request_name: str, update_name: str, table_info, module: str
+    ) -> None:
+        """生成 Controller 文件"""
+        
+        # 生成 Pydantic 请求字段
+        create_fields = []
+        update_fields = []
+        
+        needs_datetime = False
+        needs_decimal = False
+        needs_date = False
+        needs_time = False
+        
+        for col in table_info.columns:
+            if col.is_primary or col.is_auto_increment:
+                continue
+            
+            py_type = self._to_python_type(col.python_type)
+            
+            # 跟踪需要的特殊导入
+            if py_type == "datetime":
+                needs_datetime = True
+            elif py_type == "date":
+                needs_date = True
+            elif py_type == "time":
+                needs_time = True
+            elif py_type == "Decimal":
+                needs_decimal = True
+            
+            is_required = not col.nullable and col.default is None
+            field_def = self._build_pydantic_field(col, py_type, is_required)
+            
+            create_fields.append(f"    {col.name}: {py_type}{field_def}")
+            update_fields.append(f"    {col.name}: Optional[{py_type}] = None")
+        
+        create_fields_str = "\n".join(create_fields)
+        update_fields_str = "\n".join(update_fields)
+        
+        # 构建额外的类型导入
+        extra_imports = []
+        if needs_datetime:
+            extra_imports.append("datetime")
+        if needs_date:
+            extra_imports.append("date")
+        if needs_time:
+            extra_imports.append("time")
+        
+        extra_import_line = ""
+        if extra_imports:
+            extra_import_line = f"from datetime import {', '.join(extra_imports)}\n"
+        if needs_decimal:
+            extra_import_line += "from decimal import Decimal\n"
+        
+        content = f'''"""
+{class_name} 控制器
+"""
+from typing import Optional
+from pydantic import BaseModel, Field
+{extra_import_line}from fastapi import Depends
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from core.base_controller import BaseController
+from core.database import get_db
+from app.{module}.service.{table_info.name.lower()}_service import {class_name}Service
+
+
+class {request_name}(BaseModel):
+    """创建{class_name}请求"""
+{create_fields_str}
+
+
+class {update_name}(BaseModel):
+    """更新{class_name}请求"""
+{update_fields_str}
+
+
+class {controller_name}(BaseController):
+    """{class_name}控制器"""
+    
+    def __init__(self):
+        super().__init__()
+        self._setup_routes()
+    
+    def _setup_routes(self):
+        @self.router.get("/{table_info.name.lower()}/list", summary="{class_name}列表")
+        async def get_list(
+            page: int = 1, 
+            page_size: int = 10, 
+            db: AsyncSession = Depends(get_db)
+        ):
+            """获取{class_name}列表（分页）"""
+            service = {class_name}Service(db)
+            items, total = await service.get_list(page, page_size)
+            return self.paginate(items, total, page, page_size)
+        
+        @self.router.get("/{table_info.name.lower()}/{{item_id}}", summary="{class_name}详情")
+        async def get_detail(
+            item_id: int, 
+            db: AsyncSession = Depends(get_db)
+        ):
+            """获取{class_name}详情"""
+            service = {class_name}Service(db)
+            item = await service.get_detail(item_id)
+            if not item:
+                return self.error(f"{class_name} {{item_id}} 不存在", 404)
+            return self.success(data=item)
+        
+        @self.router.post("/{table_info.name.lower()}", summary="创建{class_name}")
+        async def create(
+            request: {request_name}, 
+            db: AsyncSession = Depends(get_db)
+        ):
+            """创建{class_name}"""
+            service = {class_name}Service(db)
+            item = await service.create(request.dict())
+            return self.success(data=item, message="创建成功")
+        
+        @self.router.put("/{table_info.name.lower()}/{{item_id}}", summary="更新{class_name}")
+        async def update(
+            item_id: int, 
+            request: {update_name}, 
+            db: AsyncSession = Depends(get_db)
+        ):
+            """更新{class_name}"""
+            service = {class_name}Service(db)
+            item = await service.update(item_id, request.dict(exclude_unset=True))
+            if not item:
+                return self.error(f"{class_name} {{item_id}} 不存在", 404)
+            return self.success(data=item, message="更新成功")
+        
+        @self.router.delete("/{table_info.name.lower()}/{{item_id}}", summary="删除{class_name}")
+        async def delete(
+            item_id: int, 
+            db: AsyncSession = Depends(get_db)
+        ):
+            """删除{class_name}"""
+            service = {class_name}Service(db)
+            success = await service.delete(item_id)
+            if not success:
+                return self.error(f"{class_name} {{item_id}} 不存在", 404)
+            return self.success(message="删除成功")
+'''
+        
+        file_path = controller_dir / f"{table_info.name.lower()}_controller.py"
+        file_path.write_text(content, encoding="utf-8")
+    
+    def _generate_service(
+        self, service_dir: Path, service_name: str, class_name: str, 
+        model_name: str, module: str, table_info
+    ) -> None:
+        """生成 Service 文件"""
+        
+        # 确定 Service 文件名（使用表名而非模型名推导）
+        service_file_name = f"{table_info.name.lower()}_service"
+        
+        content = f'''"""
+{class_name} 服务
+"""
+from typing import Optional, Dict, Any, List
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+from core.base_service import BaseService
+from app.{module}.model.{table_info.name.lower()}_model import {model_name}
+
+
+class {service_name}(BaseService):
+    """{class_name}服务"""
+    
+    def __init__(self, db: AsyncSession):
+        super().__init__(db)
+        self.model_class = {model_name}
+    
+    async def get_list(self, page: int = 1, page_size: int = 10) -> tuple:
+        """获取{class_name}列表"""
+        offset = (page - 1) * page_size
+        stmt = select(self.model_class).offset(offset).limit(page_size).order_by(self.model_class.id.desc())
+        result = await self.db.execute(stmt)
+        items = result.scalars().all()
+        
+        count_stmt = select(self.model_class)
+        count_result = await self.db.execute(count_stmt)
+        total = len(count_result.scalars().all())
+        
+        return [{k: v for k, v in item.__dict__.items() if not k.startswith('_') and k != 'id'} for item in items], total
+    
+    async def get_detail(self, item_id: int) -> Optional[Dict[str, Any]]:
+        """获取{class_name}详情"""
+        item = await self.db.get(self.model_class, item_id)
+        if not item:
+            return None
+        return {k: v for k, v in item.__dict__.items() if not k.startswith('_') and k != 'id'}
+    
+    async def create(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """创建{class_name}"""
+        item = self.model_class(**data)
+        self.db.add(item)
+        await self.db.flush()
+        await self.db.refresh(item)
+        return {k: v for k, v in item.__dict__.items() if not k.startswith('_') and k != 'id'}
+    
+    async def update(self, item_id: int, data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """更新{class_name}"""
+        item = await self.db.get(self.model_class, item_id)
+        if not item:
+            return None
+        for key, value in data.items():
+            setattr(item, key, value)
+        await self.db.flush()
+        await self.db.refresh(item)
+        return {k: v for k, v in item.__dict__.items() if not k.startswith('_') and k != 'id'}
+    
+    async def delete(self, item_id: int) -> bool:
+        """删除{class_name}"""
+        item = await self.db.get(self.model_class, item_id)
+        if not item:
+            return False
+        await self.db.delete(item)
+        await self.db.flush()
+        return True
+'''
+        
+        file_path = service_dir / f"{service_file_name}.py"
+        file_path.write_text(content, encoding="utf-8")
+    
+    def _to_python_type(self, db_type: str) -> str:
+        """数据库类型转 Python 类型"""
+        type_map = {
+            "int": "int",
+            "str": "str",
+            "float": "float",
+            "bool": "bool",
+            "datetime": "datetime",
+            "date": "date",
+            "time": "time",
+            "dict": "dict",
+            "bytes": "bytes",
+            "Decimal": "Decimal",
+        }
+        return type_map.get(db_type, "str")
+    
+    def _build_pydantic_field(self, col, py_type: str, is_required: bool) -> str:
+        """构建 Pydantic 字段定义"""
+        comment_str = f', description="{col.comment}"' if col.comment else ""
+        
+        if is_required:
+            if col.max_length and col.sqlalchemy_type == "String":
+                return f" = Field(..., max_length={col.max_length}{comment_str})"
+            return f" = Field(...{comment_str})"
+        else:
+            if col.max_length and col.sqlalchemy_type == "String":
+                return f" = Field(None, max_length={col.max_length}{comment_str})"
+            return f" = Field(None{comment_str})"
+
+
 class MakeModuleCommand(Command):
     """创建模块命令
     
@@ -508,6 +955,11 @@ def create_parser() -> argparse.ArgumentParser:
     ms_parser.add_argument("name", help="服务名称")
     ms_parser.add_argument("--module", "-m", help="模块名称")
     
+    # make-crud 命令
+    mc_parser = subparsers.add_parser("make-crud", help="根据数据库表生成 CRUD 代码")
+    mc_parser.add_argument("table", help="数据库表名称")
+    mc_parser.add_argument("--module", "-m", help="模块名称")
+    
     # make-module 命令
     mm_parser = subparsers.add_parser("make-module", help="创建新模块")
     mm_parser.add_argument("name", help="模块名称")
@@ -537,6 +989,7 @@ def main():
         "make-controller": MakeControllerCommand,
         "make-model": MakeModelCommand,
         "make-service": MakeServiceCommand,
+        "make-crud": MakeCrudCommand,
         "make-module": MakeModuleCommand,
         "db-migrate": DBMigrateCommand,
         "list-routes": ListRoutesCommand,

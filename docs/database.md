@@ -1,19 +1,33 @@
-# 数据库配置与迁移
+# 数据库配置
 
-## 数据库连接
+ThinkPython 支持 MySQL、PostgreSQL、SQLite、MSSQL 四种数据库，通过 `.env` 文件切换。
 
-ThinkPython 支持多种数据库，通过 `.env` 文件配置。
+## 配置文件
 
-### SQLite（开发环境推荐）
+所有数据库配置在 `config/database.py` 中管理，通过 `.env` 环境变量覆盖。
+
+## SQLite（默认）
+
+零配置即可使用，适合开发和测试。
+
+**.env 配置：**
 
 ```env
 DB_TYPE=sqlite
-DB_SQLITE_PATH=./data/database.db
 ```
 
-零配置，无需安装额外数据库服务。
+SQLite 使用 `aiosqlite` 异步驱动，数据库文件默认在 `./data/database.db`，可自定义路径：
 
-### MySQL（生产环境推荐）
+```env
+DB_TYPE=sqlite
+DB_SQLITE_PATH=./mydata.db
+```
+
+无需额外安装依赖。
+
+## MySQL
+
+**.env 配置：**
 
 ```env
 DB_TYPE=mysql
@@ -24,13 +38,25 @@ DB_USER=root
 DB_PASSWORD=your_password
 ```
 
-需要安装 MySQL 并创建数据库：
+**安装驱动：**
 
-```sql
-CREATE DATABASE thinkpython DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+```bash
+pip install aiomysql
 ```
 
-### PostgreSQL
+**连接池配置（可选）：**
+
+```env
+DB_POOL_SIZE=10
+DB_MAX_OVERFLOW=20
+DB_POOL_RECYCLE=3600
+DB_POOL_PRE_PING=True
+DB_CHARSET=utf8mb4
+```
+
+## PostgreSQL
+
+**.env 配置：**
 
 ```env
 DB_TYPE=postgresql
@@ -41,81 +67,51 @@ DB_USER=postgres
 DB_PASSWORD=your_password
 ```
 
----
-
-## 数据迁移
-
-### 方式一：使用 CLI 命令
+**安装驱动：**
 
 ```bash
-# 执行迁移（创建表）
+pip install asyncpg
+```
+
+## SQL Server (MSSQL)
+
+**.env 配置：**
+
+```env
+DB_TYPE=mssql
+DB_HOST=127.0.0.1
+DB_PORT=1433
+DB_NAME=thinkpython
+DB_USER=sa
+DB_PASSWORD=your_password
+```
+
+**安装驱动：**
+
+```bash
+pip install aioodbc pyodbc
+```
+
+> 注意：MSSQL 需要系统安装 ODBC Driver。Windows 上通常自带，Linux 需要额外安装 [Microsoft ODBC Driver](https://docs.microsoft.com/en-us/sql/connect/odbc/linux-mac/installing-the-microsoft-odbc-driver-for-sql-server)。
+
+## 调试：查看 SQL 语句
+
+开发时可以开启 SQL 日志：
+
+```env
+DB_ECHO=True
+```
+
+开启后所有执行的 SQL 语句会打印到控制台。
+
+## 数据库迁移
+
+配置好数据库后，执行迁移命令创建表：
+
+```bash
 python think.py db-migrate
 ```
 
-### 方式二：使用 Alembic
-
-```bash
-# 安装 Alembic
-pip install alembic
-
-# 初始化迁移
-alembic init alembic
-
-# 创建迁移脚本
-alembic revision --autogenerate -m "initial migration"
-
-# 执行迁移
-alembic upgrade head
-```
-
 ---
 
-## 定义模型
-
-模型继承自 `BaseModel`，位于 `app/{module}/model/` 目录。
-
-```python
-from sqlalchemy import Column, String, Integer
-from core.base_model import BaseModel
-
-
-class User(BaseModel):
-    __tablename__ = "user"
-    
-    username = Column(String(50), unique=True, nullable=False, comment="用户名")
-    email = Column(String(100), unique=True, nullable=False, comment="邮箱")
-    status = Column(Integer, default=1, comment="状态")
-```
-
-### 常用字段类型
-
-| 类型 | SQLAlchemy | 说明 |
-|------|-----------|------|
-| 整数 | `Integer` | 普通整数 |
-| 大整数 | `BigInteger` | 大整数 |
-| 字符串 | `String(长度)` | 定长字符串 |
-| 文本 | `Text` | 长文本 |
-| 布尔 | `Boolean` | 布尔值 |
-| 日期时间 | `DateTime` | 日期时间 |
-| 浮点数 | `Float` | 浮点数 |
-| JSON | `JSON` | JSON数据 |
-
----
-
-## 连接池配置
-
-生产环境建议调整连接池参数：
-
-```env
-DB_POOL_SIZE=20
-DB_MAX_OVERFLOW=40
-DB_POOL_RECYCLE=3600
-DB_POOL_PRE_PING=True
-```
-
-| 参数 | 说明 |
-|------|------|
-| `DB_POOL_SIZE` | 连接池大小 |
-| `DB_MAX_OVERFLOW` | 最大溢出连接数 |
-| `DB_POOL_RECYCLE` | 连接回收时间（秒） |
-| `DB_POOL_PRE_PING` | 使用前检测连接有效性 |
+[← 返回首页](../README.md)

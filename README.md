@@ -6,11 +6,11 @@
 </p>
 
 <p align="center">
-  <a href="#-一键开始"><strong>一键开始</strong></a> •
+  <a href="#-快速开始"><strong>快速开始</strong></a> •
   <a href="#-功能特性"><strong>功能特性</strong></a> •
-  <a href="#-完整教程"><strong>完整教程</strong></a> •
   <a href="#-项目结构"><strong>项目结构</strong></a> •
-  <a href="#-cli工具"><strong>CLI工具</strong></a> •
+  <a href="#-配置说明"><strong>配置说明</strong></a> •
+  <a href="#-文档中心"><strong>文档中心</strong></a> •
   <a href="#-常见问题"><strong>常见问题</strong></a>
 </p>
 
@@ -24,8 +24,6 @@
 
 ## 🎯 为什么选择 ThinkPython？
 
-ThinkPython 是一套**开箱即用**的企业级 Python Web 框架。它的目标是：
-
 ✅ **零学习成本** - 如果你用过 ThinkPHP、Spring Boot，你会感觉非常熟悉  
 ✅ **快速开发** - 一条命令生成 CRUD 三层代码，专注业务逻辑  
 ✅ **生产就绪** - 内置日志、异常处理、缓存、JWT 认证等企业级功能  
@@ -33,71 +31,30 @@ ThinkPython 是一套**开箱即用**的企业级 Python Web 框架。它的目�
 
 ---
 
-## 🚀 一键开始
+## 🚀 快速开始
 
-### 第1步：下载框架
+### 1. 安装
 
 ```bash
-# 方式1：使用 Git 克隆
 git clone https://gitee.com/hongxinge/think-python.git
-cd ThinkPython
-
-# 方式2：直接下载 ZIP 并解压
-# 访问 https://gitee.com/hongxinge/think-python 下载
-```
-
-### 第2步：安装依赖
-
-```bash
+cd think-python
 pip install -r requirements.txt
 ```
 
-> 💡 **提示**：推荐使用 Python 虚拟环境
-> ```bash
-> # Windows
-> python -m venv venv
-> venv\Scripts\activate
-> 
-> # macOS/Linux
-> python3 -m venv venv
-> source venv/bin/activate
-> ```
-
-### 第3步：配置环境
-
-```bash
-# 复制示例配置文件
-cp .env.example .env   # Linux/macOS
-copy .env.example .env # Windows
-```
-
-> 🎉 **好消息**：默认配置使用 SQLite + 内存缓存，**无需修改任何配置即可运行**！
-
-### 第4步：启动服务
+### 2. 启动
 
 ```bash
 python think.py run
 ```
 
-启动成功后你会看到类似输出：
-```
-2024-01-01 10:00:00 | INFO | 🚀 ThinkPython v1.0.0 启动中...
-2024-01-01 10:00:00 | INFO | 📦 模块模式: single
-2024-01-01 10:00:00 | INFO | ✅ 数据库和缓存初始化完成
-INFO:     Uvicorn running on http://0.0.0.0:8000
-```
+> 🎉 **零配置启动**：默认使用 SQLite + 内存缓存，无需修改任何配置！
 
-### 第5步：访问应用
-
-打开浏览器访问：
+### 3. 访问
 
 | 地址 | 说明 |
 |------|------|
 | http://localhost:8000/docs | 📘 API 文档（Swagger UI） |
-| http://localhost:8000/redoc | 📖 API 文档（ReDoc） |
 | http://localhost:8000/health | 💚 健康检查 |
-
-**恭喜！你已经成功运行了 ThinkPython 框架！** 🎊
 
 ---
 
@@ -105,625 +62,15 @@ INFO:     Uvicorn running on http://0.0.0.0:8000
 
 | 功能 | 说明 |
 |------|------|
-| 🔄 **单/多模块切换** | 通过配置自由切换，小项目用单模块，大项目用多模块 |
+| 🔄 **单/多模块切换** | 配置自由切换，小项目用单模块，大项目用多模块 |
 | 🗄️ **多数据库支持** | MySQL / PostgreSQL / SQLite / MSSQL 一键配置 |
 | 💾 **多缓存支持** | Redis / Memory / Memcached 灵活选择 |
-| 🛣️ **自动路由注册** | 控制器自动发现，无需手动注册路由 |
+| 🛣️ **自动路由注册** | 控制器自动发现，无需手动注册 |
 | 🏗️ **三层架构** | Controller / Service / Model 清晰分层 |
-| 🖥️ **CLI命令行工具** | 类似 ThinkPHP 的 `think` 命令，快速生成代码 |
-| 📦 **统一响应格式** | 标准化的 API 响应结构 |
-| ⚠️ **全局异常处理** | 优雅的错误处理机制 |
-| 🔐 **JWT认证** | 内置 Token 生成与验证 |
-| 🌐 **CORS跨域** | 开箱即用的跨域支持 |
-| ⚡ **异步支持** | 基于 FastAPI + SQLAlchemy 2.0 全异步 |
-| 📝 **日志系统** | 使用 loguru，请求追踪ID自动记录 |
-
----
-
-## 📖 完整教程
-
-### 教程1：5分钟创建你的第一个 API
-
-让我们从零开始，创建一个完整的「用户管理」CRUD API。
-
-#### 1️⃣ 生成代码文件
-
-使用 CLI 工具一键生成三层代码：
-
-```bash
-python think.py make-controller User
-python think.py make-model User
-python think.py make-service User
-```
-
-这会在 `app/single/` 目录下自动生成：
-- `controller/user_controller.py` - 控制器（处理HTTP请求）
-- `model/user_model.py` - 数据模型（定义数据库表结构）
-- `service/user_service.py` - 服务层（编写业务逻辑）
-
-#### 2️⃣ 定义数据模型
-
-打开 `app/single/model/user_model.py`，添加字段：
-
-```python
-"""
-用户模型
-"""
-from sqlalchemy import Column, String, Integer
-from core.base_model import BaseModel
-
-
-class User(BaseModel):
-    """用户模型"""
-    
-    __tablename__ = "user"
-    
-    username = Column(String(50), unique=True, nullable=False, comment="用户名")
-    email = Column(String(100), unique=True, nullable=False, comment="邮箱")
-    mobile = Column(String(20), comment="手机号")
-    password = Column(String(255), nullable=False, comment="密码")
-    status = Column(Integer, default=1, comment="状态: 0禁用 1启用")
-```
-
-> 💡 `BaseModel` 已自带 `id`（主键）、`created_at`（创建时间）、`updated_at`（更新时间）字段
-
-#### 3️⃣ 编写服务层
-
-打开 `app/single/service/user_service.py`，添加业务方法：
-
-```python
-"""
-用户服务
-"""
-from typing import Optional
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
-from core.base_service import BaseService
-from app.single.model.user_model import User
-
-
-class UserService(BaseService):
-    """用户服务"""
-    
-    def __init__(self, db: AsyncSession):
-        super().__init__(db)
-        self.model_class = User  # 关联到User模型
-    
-    async def get_by_username(self, username: str) -> Optional[User]:
-        """根据用户名获取用户"""
-        stmt = select(User).where(User.username == username)
-        result = await self.db.execute(stmt)
-        return result.scalar_one_or_none()
-    
-    async def check_username_exists(self, username: str) -> bool:
-        """检查用户名是否存在"""
-        user = await self.get_by_username(username)
-        return user is not None
-```
-
-#### 4️⃣ 编写控制器
-
-打开 `app/single/controller/user_controller.py`，实现路由：
-
-```python
-"""
-用户控制器
-"""
-from typing import Optional
-from pydantic import BaseModel
-from fastapi import Depends
-from sqlalchemy.ext.asyncio import AsyncSession
-
-from core.base_controller import BaseController
-from core.database import get_db
-from core.exception import NotFoundException
-from app.single.service.user_service import UserService
-
-
-class UserCreateRequest(BaseModel):
-    """创建用户请求"""
-    username: str
-    email: str
-    mobile: Optional[str] = None
-    password: str
-
-
-class UserUpdateRequest(BaseModel):
-    """更新用户请求"""
-    email: Optional[str] = None
-    mobile: Optional[str] = None
-
-
-class UserController(BaseController):
-    """用户控制器"""
-    
-    def __init__(self):
-        super().__init__()
-        self._setup_routes()
-    
-    def _setup_routes(self):
-        @self.router.get("/user/list", summary="用户列表")
-        async def get_list(page: int = 1, page_size: int = 10, db: AsyncSession = Depends(get_db)):
-            """获取用户列表（分页）"""
-            service = UserService(db)
-            items, total = await service.get_all(page, page_size)
-            return self.paginate(items, total, page, page_size)
-        
-        @self.router.get("/user/{user_id}", summary="用户详情")
-        async def get_detail(user_id: int, db: AsyncSession = Depends(get_db)):
-            """获取用户详情"""
-            service = UserService(db)
-            user = await service.get_by_id(user_id)
-            if not user:
-                raise NotFoundException(f"用户 {user_id} 不存在")
-            return self.success(data=user)
-        
-        @self.router.post("/user", summary="创建用户")
-        async def create(request: UserCreateRequest, db: AsyncSession = Depends(get_db)):
-            """创建用户"""
-            service = UserService(db)
-            
-            # 检查用户名是否已存在
-            if await service.check_username_exists(request.username):
-                return self.error("用户名已存在", 400)
-            
-            user = await service.create(request.model_dump())
-            return self.success(data=user, message="创建成功")
-        
-        @self.router.put("/user/{user_id}", summary="更新用户")
-        async def update(user_id: int, request: UserUpdateRequest, db: AsyncSession = Depends(get_db)):
-            """更新用户"""
-            service = UserService(db)
-            user = await service.update(user_id, request.model_dump(exclude_unset=True))
-            if not user:
-                raise NotFoundException(f"用户 {user_id} 不存在")
-            return self.success(data=user, message="更新成功")
-        
-        @self.router.delete("/user/{user_id}", summary="删除用户")
-        async def delete(user_id: int, db: AsyncSession = Depends(get_db)):
-            """删除用户"""
-            service = UserService(db)
-            success = await service.delete(user_id)
-            if not success:
-                raise NotFoundException(f"用户 {user_id} 不存在")
-            return self.success(message="删除成功")
-```
-
-#### 5️⃣ 执行数据库迁移
-
-```bash
-python think.py db-migrate
-```
-
-这会自动创建数据库表。
-
-#### 6️⃣ 启动并测试
-
-```bash
-python think.py run
-```
-
-使用 curl 测试 API：
-
-```bash
-# 创建用户
-curl -X POST http://localhost:8000/user \
-  -H "Content-Type: application/json" \
-  -d '{"username":"zhangsan","email":"zhangsan@example.com","password":"123456"}'
-
-# 返回示例：
-# {"code": 200, "message": "创建成功", "data": {"id": 1, "username": "zhangsan", ...}}
-
-# 获取用户列表
-curl http://localhost:8000/user/list
-
-# 获取用户详情
-curl http://localhost:8000/user/1
-
-# 更新用户
-curl -X PUT http://localhost:8000/user/1 \
-  -H "Content-Type: application/json" \
-  -d '{"email":"new@example.com"}'
-
-# 删除用户
-curl -X DELETE http://localhost:8000/user/1
-```
-
-> 💡 你也可以直接在浏览器打开 http://localhost:8000/docs 进行可视化测试！
-
----
-
-### 教程2：使用 MySQL 数据库
-
-#### 1️⃣ 安装 MySQL 驱动
-
-```bash
-pip install aiomysql
-```
-
-#### 2️⃣ 创建数据库
-
-```sql
-CREATE DATABASE thinkpython DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-```
-
-#### 3️⃣ 修改 `.env` 配置
-
-```env
-DB_TYPE=mysql
-DB_HOST=127.0.0.1
-DB_PORT=3306
-DB_NAME=thinkpython
-DB_USER=root
-DB_PASSWORD=你的密码
-```
-
-#### 4️⃣ 执行迁移
-
-```bash
-python think.py db-migrate
-```
-
-完成！现在你的应用已经连接到 MySQL 了。
-
----
-
-### 教程3：使用 Redis 缓存
-
-#### 1️⃣ 安装 Redis 驱动
-
-```bash
-pip install redis
-```
-
-#### 2️⃣ 修改 `.env` 配置
-
-```env
-CACHE_TYPE=redis
-REDIS_HOST=127.0.0.1
-REDIS_PORT=6379
-REDIS_DB=0
-REDIS_PASSWORD=
-```
-
-#### 3️⃣ 在代码中使用缓存
-
-```python
-from core.cache import get_cache, set_cache, delete_cache
-
-# 设置缓存（默认过期时间3600秒）
-await set_cache("user:1", {"name": "张三"})
-
-# 设置缓存（自定义过期时间60秒）
-await set_cache("user:1", {"name": "张三"}, ttl=60)
-
-# 获取缓存
-user = await get_cache("user:1")
-
-# 删除缓存
-await delete_cache("user:1")
-```
-
----
-
-### 教程4：切换到多模块模式
-
-当项目变大时，可以切换到多模块模式，将代码按业务拆分。
-
-#### 1️⃣ 修改 `.env` 配置
-
-```env
-MODULE_MODE=multi
-ENABLED_MODULES=admin,api
-```
-
-#### 2️⃣ 理解模块结构
-
-```
-app/
-├── admin/              # 后台管理模块
-│   ├── controller/     #   控制器
-│   ├── service/        #   服务
-│   └── model/          #   模型
-└── api/                # API模块
-    ├── controller/
-    ├── service/
-    └── model/
-```
-
-#### 3️⃣ 创建新模块
-
-```bash
-# 创建订单模块
-python think.py make-module order
-```
-
-这会自动创建 `app/order/` 目录及子目录。
-
-#### 4️⃣ 访问路径
-
-多模块模式下，访问路径自动带模块前缀：
-
-| 路由 | 访问路径 |
-|------|---------|
-| admin 模块的 UserController | `/admin/user/list` |
-| api 模块的 ProductController | `/api/product/list` |
-| order 模块的 OrderController | `/order/order/list` |
-
-### 教程5：使用公共模块（common）
-
-在多模块项目中，多个模块可能需要共用相同的代码。`app/common/` 就是用来存放这些跨模块共享代码的地方。
-
-#### 为什么要用 common 模块？
-
-假设你有一个后台管理系统（admin）和一个对外API（api），它们都需要操作用户数据：
-
-```
-❌ 不用 common（错误做法）：
-app/admin/model/user_model.py    ← admin 定义了一个 User 模型
-app/api/model/user_model.py      ← api 又定义了一个相同的 User 模型（重复代码！）
-
-✅ 使用 common（正确做法）：
-app/common/model/user_model.py   ← 所有模块共用的 User 模型
-app/admin/service/user_service.py ← admin 引入: from app.common.model.user_model import User
-app/api/service/user_service.py   ← api 引入: from app.common.model.user_model import User
-```
-
-#### common 模块内置示例
-
-| 文件 | 说明 |
-|------|------|
-| `common/model/user_model.py` | 公共用户模型，所有模块共用 |
-| `common/service/auth_service.py` | 公共认证服务，处理登录验证 |
-| `common/controller/base_auth_controller.py` | 需要登录的控制器基类 |
-
-#### 使用示例：创建一个需要登录的接口
-
-```python
-# 在你的控制器中继承 BaseAuthController
-from app.common.controller.base_auth_controller import BaseAuthController
-from fastapi import Depends
-
-class ProfileController(BaseAuthController):
-    """用户个人中心控制器"""
-    
-    def __init__(self):
-        super().__init__()
-        self._setup_routes()
-    
-    def _setup_routes(self):
-        @self.router.get("/profile", summary="获取个人信息")
-        async def get_profile(user_id: int = Depends(self.get_current_user_id)):
-            # user_id 已自动从 Token 中解析出来
-            return self.success(data={"user_id": user_id})
-```
-
-请求时需要在 Header 中携带 Token：
-```bash
-curl http://localhost:8000/profile \
-  -H "Authorization: Bearer eyJhbGciOi..."
-```
-
----
-
-### 教程6：认证机制与免验证路由配置
-
-ThinkPython 采用**"默认认证 + 白名单跳过"**的安全策略，提供三种灵活的方式配置免验证接口（如登录、注册、健康检查）。
-
-#### 默认行为
-
-**默认所有接口都需要 JWT Token 认证**。如果请求未携带有效 Token，框架会自动返回 401 错误：
-
-```json
-{
-  "code": 401,
-  "message": "未提供认证 Token，请先登录",
-  "data": null
-}
-```
-
-#### 方式一：全局白名单（系统级免验证）
-
-适用于整个系统级别的公开接口，如健康检查、API 文档等。
-
-**位置**: `config/auth.py`
-
-```python
-# 全局免验证路径列表
-SKIP_AUTH_PATHS = [
-    "/health",            # 健康检查
-    "/docs",              # Swagger API 文档
-    "/redoc",             # ReDoc API 文档
-    "/openapi.json",      # OpenAPI Schema
-    "/favicon.ico",       # 网站图标
-]
-```
-
-**特点**：配置一次，全局生效，支持前缀匹配（如 `/docs` 会匹配 `/docs` 和 `/docs/`）。
-
-#### 方式二：控制器级白名单（最推荐，模块级免验证）
-
-适用于业务模块中的公开接口，如登录、注册、忘记密码等。
-
-**使用方法**：在控制器类中定义 `SKIP_AUTH_ROUTES` 属性，声明哪些接口免验证：
-
-```python
-from core.base_controller import BaseController
-
-class AuthController(BaseController):
-    """认证控制器"""
-    
-    # ✅ 只需配置一次，以下接口免验证
-    # 格式: "HTTP方法 /路由路径"
-    SKIP_AUTH_ROUTES = [
-        "POST /auth/login",           # 登录接口免验证
-        "POST /auth/register",        # 注册接口免验证
-        "POST /auth/forgot-password", # 忘记密码免验证
-    ]
-    
-    def _setup_routes(self):
-        # ✅ 免验证接口 - 无需任何装饰器
-        @self.router.post("/auth/login")
-        async def login(data: LoginRequest):
-            return self.success(data={"token": "..."})
-        
-        # ✅ 免验证接口 - 无需任何装饰器
-        @self.router.post("/auth/register")
-        async def register(data: RegisterRequest):
-            return self.success(data={"id": 1})
-        
-        # ✅ 需要认证的接口 - 也无需装饰器，中间件自动拦截
-        @self.router.get("/auth/profile")
-        async def get_profile(request: Request):
-            user = self.get_current_user(request)
-            return self.success(data={"user_id": user.user_id})
-```
-
-**特点**：配置一次，控制器内所有匹配路径自动放行，其余接口自动拦截。
-
-**SKIP_AUTH_ROUTES 配置格式**：
-| 格式 | 说明 | 示例 |
-|------|------|------|
-| `"POST /auth/login"` | 精确匹配（方法+路径） | 只允许 POST 方法免验证 |
-| `"/auth/login"` | 仅路径匹配 | 所有 HTTP 方法都免验证 |
-| `"GET /api/*"` | 通配符匹配 | GET /api/xxx 全部免验证 |
-
-#### 方式三：装饰器标记（细粒度控制）
-
-适用于单个接口的免验证标记，灵活度最高。
-
-**使用方法**：在路由函数上添加 `@skip_auth` 装饰器：
-
-```python
-from helpers.auth import skip_auth
-
-class AuthController(BaseController):
-    def _setup_routes(self):
-        # ✅ 使用装饰器标记单个接口免验证
-        @self.router.post("/auth/login")
-        @skip_auth
-        async def login(data: LoginRequest):
-            return self.success(data={"token": "..."})
-```
-
-**特点**：优先级最高，可以覆盖白名单配置。
-
-#### 三种方式对比
-
-| 方式 | 配置位置 | 适用场景 | 推荐指数 |
-|:---:|:---|:---|:---:|
-| 全局白名单 | `config/auth.py` | 系统级接口（/health, /docs） | ⭐⭐⭐ |
-| **控制器白名单** | 控制器 `SKIP_AUTH_ROUTES` | 模块级接口（登录、注册） | ⭐⭐⭐⭐⭐ |
-| 装饰器 | `@skip_auth` | 单个接口的细粒度控制 | ⭐⭐⭐⭐ |
-
-#### 完整示例：登录/注册/个人中心
-
-框架已内置完整的认证示例，位于 `app/api/controller/auth_controller.py`：
-
-```bash
-# 1. 登录（免验证）
-curl -X POST http://localhost:8000/api/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"username": "admin", "password": "123456"}'
-
-# 返回：
-# {
-#   "code": 200,
-#   "message": "登录成功",
-#   "data": {
-#     "token": "eyJhbGciOiJIUzI1NiIs...",
-#     "user_id": 1,
-#     "username": "admin"
-#   }
-# }
-
-# 2. 注册（免验证）
-curl -X POST http://localhost:8000/api/auth/register \
-  -H "Content-Type: application/json" \
-  -d '{"username": "newuser", "password": "123456", "email": "new@example.com"}'
-
-# 3. 获取个人信息（需要 Token）
-curl -X GET http://localhost:8000/api/auth/profile \
-  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIs..."
-
-# 返回：
-# {
-#   "code": 200,
-#   "data": {
-#     "user_id": 1,
-#     "username": "admin",
-#     "email": "admin@example.com"
-#   }
-# }
-```
-
-#### 获取当前用户信息
-
-在需要认证的接口中，通过 `self.get_current_user(request)` 获取当前登录用户：
-
-```python
-from core.base_controller import BaseController
-from app.common.controller.base_auth_controller import BaseAuthController
-
-class ProfileController(BaseAuthController):
-    """个人中心控制器"""
-    
-    def _setup_routes(self):
-        @self.router.get("/profile")
-        async def get_profile(request: Request):
-            # ✅ 获取当前登录用户信息（由中间件自动注入）
-            user = self.get_current_user(request)
-            
-            return self.success(data={
-                "user_id": user.user_id,
-                "username": user.username,
-            })
-```
-
-#### 认证相关配置项
-
-在 `config/auth.py` 中可以配置更多认证参数：
-
-```python
-# JWT 配置
-JWT_SECRET = "your-secret-key"      # JWT 密钥（生产环境必须修改）
-JWT_ALGORITHM = "HS256"             # 签名算法
-JWT_EXPIRE_HOURS = 24               # Token 过期时间（小时）
-JWT_REFRESH_HOURS = 2               # Token 刷新窗口期（小时）
-
-# 登录安全策略
-LOGIN_MAX_ATTEMPTS = 5              # 登录失败最大尝试次数
-LOGIN_LOCK_DURATION = 30            # 账号锁定时长（分钟）
-
-# 全局开关
-AUTH_ENABLED = True                 # 是否启用全局认证中间件
-```
-
-> ⚠️ **安全提醒**：生产环境务必修改 `JWT_SECRET` 为强随机字符串！
-
-#### 认证流程图
-
-```
-请求进入
-    ↓
-全局白名单检查 ──匹配──→ 放行
-    ↓不匹配
-控制器白名单检查 ──匹配──→ 放行
-    ↓不匹配
-装饰器检查 ──标记──→ 放行
-    ↓未标记
-验证 Authorization 头
-    ↓缺失
-返回 401 错误
-    ↓有 Token
-验证 Token 签名和过期时间
-    ↓无效/过期
-返回 401 错误
-    ↓有效
-注入 user 到 request.state
-    ↓
-放行到业务逻辑
-```
+| 🔐 **智能认证** | 全局中间件 + 白名单跳过，配置一次即可 |
+| 🖥️ **CLI 工具** | 类似 ThinkPHP 的 `think` 命令，快速生成代码 |
+| 📦 **Excel 工具** | 内置 Excel 导入导出，支持样式、自动列宽 |
+| 📁 **文件工具** | 内置文件上传下载，支持格式验证、UUID 命名 |
 
 ---
 
@@ -731,409 +78,151 @@ AUTH_ENABLED = True                 # 是否启用全局认证中间件
 
 ```
 ThinkPython/
-├── app/                          # 📁 应用目录（你主要在这里写代码）
-│   ├── common/                   #   📌 公共模块（跨模块共享代码）
-│   │   ├── controller/           #     公共控制器（如：BaseAuthController）
-│   │   ├── service/              #     公共服务（如：AuthService、SmsService）
-│   │   └── model/                #     公共模型（如：User 模型，多模块共用）
-│   ├── single/                   #   单模块模式（默认）
-│   │   ├── controller/           #     控制器层：处理HTTP请求
-│   │   ├── service/              #     服务层：业务逻辑
-│   │   └── model/                #     数据层：数据库表结构
-│   ├── admin/                    #   后台管理模块（多模块模式）
-│   └── api/                      #   API模块（多模块模式）
-│
-├── config/                       # 📁 配置目录
-│   ├── app.py                    #   应用配置
-│   ├── database.py               #   数据库配置
-│   └── cache.py                  #   缓存配置
-│
-├── core/                         # 📁 核心框架层（一般不需要修改）
-│   ├── base_controller.py        #   基础控制器
-│   ├── base_service.py           #   基础服务
-│   ├── base_model.py             #   基础模型
-│   ├── database.py               #   数据库连接管理
-│   ├── cache.py                  #   缓存连接管理
-│   └── exception.py              #   异常处理
-│
-├── helpers/                      # 📁 助手函数
-│   ├── common.py                 #   常用工具函数
-│   ├── response.py               #   响应封装
-│   ├── validate.py               #   验证工具
-│   └── auth.py                   #   认证工具
-│
-├── router/                       # 📁 路由管理（自动注册）
-├── middleware/                   # 📁 中间件
-├── utils/                        # 📁 工具类
-├── docs/                         # 📁 文档
-│
-├── think.py                      # 🖥️ CLI命令行工具
-├── main.py                       # 🚀 应用入口
-├── requirements.txt              # 📦 依赖包列表
-├── .env.example                  # ⚙️ 配置示例
-└── .env                          # ⚙️ 你的配置（从.env.example复制）
-```
-
----
-
-## 🖥️ CLI工具
-
-ThinkPython 提供强大的命令行工具，让开发更高效。
-
-### 常用命令速查
-
-| 命令 | 说明 | 示例 |
-|------|------|------|
-| `run` | 启动开发服务器 | `python think.py run` |
-| `make-controller` | 创建控制器 | `python think.py make-controller User` |
-| `make-model` | 创建数据模型 | `python think.py make-model User` |
-| `make-service` | 创建服务层 | `python think.py make-service User` |
-| `make-module` | 创建新模块 | `python think.py make-module order` |
-| `db-migrate` | 数据库迁移 | `python think.py db-migrate` |
-| `list-routes` | 列出所有路由 | `python think.py list-routes` |
-
-### run - 启动服务器
-
-```bash
-# 默认启动（端口8000，开启热重载）
-python think.py run
-
-# 指定端口
-python think.py run --port 8080
-
-# 指定监听地址
-python think.py run --host 127.0.0.1
-
-# 关闭热重载（生产环境使用）
-python think.py run --no-reload
-```
-
-### make-controller - 创建控制器
-
-```bash
-# 在单模块模式下创建
-python think.py make-controller User
-
-# 在多模块模式下指定模块
-python think.py make-controller User --module admin
-```
-
-生成的文件位置：
-- 单模块：`app/single/controller/user_controller.py`
-- 多模块：`app/admin/controller/user_controller.py`
-
-### make-model - 创建数据模型
-
-```bash
-python think.py make-model User
-python think.py make-model User --module admin
-```
-
-### make-service - 创建服务
-
-```bash
-python think.py make-service User
-python think.py make-service User --module admin
-```
-
-### make-module - 创建新模块
-
-```bash
-python think.py make-module order
-```
-
-会创建：
-```
-app/order/
-├── __init__.py
-├── controller/
-│   └── __init__.py
-├── service/
-│   └── __init__.py
-└── model/
-    └── __init__.py
-```
-
-### db-migrate - 数据库迁移
-
-```bash
-python think.py db-migrate
-```
-
-自动扫描所有模型并创建数据库表。
-
-### list-routes - 列出路由
-
-```bash
-python think.py list-routes
-```
-
-输出示例：
-```
-方法         路径                              描述                            
---------------------------------------------------------------------------------
-GET          /health                           健康检查                        
-GET          /user/list                        用户列表                        
-GET          /user/{user_id}                   用户详情                        
-POST         /user                             创建用户                        
-PUT          /user/{user_id}                   更新用户                        
-DELETE       /user/{user_id}                   删除用户                        
-```
-
----
-
-## 📦 统一响应格式
-
-所有 API 接口返回统一的 JSON 格式，方便前端处理。
-
-### 成功响应
-
-```json
-{
-  "code": 200,
-  "message": "success",
-  "data": {
-    "id": 1,
-    "username": "zhangsan",
-    "email": "zhangsan@example.com"
-  }
-}
-```
-
-### 分页响应
-
-```json
-{
-  "code": 200,
-  "message": "success",
-  "data": {
-    "items": [
-      {"id": 1, "username": "zhangsan"},
-      {"id": 2, "username": "lisi"}
-    ],
-    "total": 100,
-    "page": 1,
-    "page_size": 10,
-    "total_pages": 10
-  }
-}
-```
-
-### 错误响应
-
-```json
-{
-  "code": 404,
-  "message": "用户 1 不存在",
-  "data": null
-}
-```
-
-### 参数验证失败响应
-
-```json
-{
-  "code": 422,
-  "message": "参数验证失败",
-  "data": [
-    {
-      "field": "body.username",
-      "message": "field required"
-    }
-  ]
-}
+├── app/                          # 应用目录（你主要在这里写代码）
+│   ├── common/                   # 公共模块（跨模块共享代码）
+│   ├── single/                   # 单模块模式（默认）
+│   ├── admin/                    # 后台管理模块（多模块）
+│   └── api/                      # API 模块（多模块）
+├── config/                       # 配置目录
+├── core/                         # 核心框架层
+├── helpers/                      # 助手函数
+├── router/                       # 路由管理（自动注册）
+├── middleware/                   # 中间件
+├── utils/                        # 工具类（Excel、文件）
+├── uploads/                      # 上传文件目录
+├── think.py                      # CLI 命令行工具
+├── main.py                       # 应用入口
+└── requirements.txt              # 依赖包列表
 ```
 
 ---
 
 ## ⚙️ 配置说明
 
-所有配置通过 `.env` 文件管理。复制 `.env.example` 为 `.env` 后修改。
+所有配置通过 `.env` 文件管理（从 `.env.example` 复制）：
 
-### 应用配置
-
-| 变量 | 说明 | 默认值 |
-|------|------|--------|
-| `APP_NAME` | 应用名称 | `ThinkPython` |
-| `APP_VERSION` | 应用版本 | `1.0.0` |
-| `APP_DEBUG` | 调试模式（生产环境设为False） | `True` |
-| `TIMEZONE` | 时区 | `Asia/Shanghai` |
-| `LANGUAGE` | 语言 | `zh-CN` |
-
-### 模块模式
+### 核心配置
 
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
-| `MODULE_MODE` | 模块模式 | `single` |
-| `ENABLED_MODULES` | 启用模块列表 | `admin,api` |
-| `DEFAULT_MODULE` | 默认模块 | `api` |
+| `APP_DEBUG` | 调试模式 | `True` |
+| `MODULE_MODE` | 模块模式 | `single` / `multi` |
+| `ENABLED_MODULES` | 启用模块 | `*`（自动发现） |
 
-### 数据库配置
+### 数据库
 
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
-| `DB_ENABLED` | 是否启用数据库 | `True` |
 | `DB_TYPE` | 数据库类型 | `sqlite` |
-| `DB_HOST` | 数据库主机 | `127.0.0.1` |
-| `DB_PORT` | 数据库端口 | `3306` |
-| `DB_NAME` | 数据库名称 | `thinkpython` |
-| `DB_USER` | 数据库用户名 | `root` |
-| `DB_PASSWORD` | 数据库密码 | `` |
-| `DB_SQLITE_PATH` | SQLite文件路径 | `./data/database.db` |
+| `DB_HOST` / `DB_PORT` / `DB_NAME` | 数据库连接 | 按需配置 |
+| `DB_USER` / `DB_PASSWORD` | 数据库账号 | 按需配置 |
 
-### 缓存配置
+### 缓存
 
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
-| `CACHE_ENABLED` | 是否启用缓存 | `True` |
 | `CACHE_TYPE` | 缓存类型 | `memory` |
-| `CACHE_DEFAULT_TTL` | 默认过期时间(秒) | `3600` |
+| `REDIS_HOST` / `REDIS_PORT` | Redis 连接 | 按需配置 |
 
-### JWT认证配置
+### JWT 认证
 
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
-| `JWT_SECRET` | JWT密钥（⚠️生产环境必须修改） | `your-secret-key...` |
-| `JWT_ALGORITHM` | 加密算法 | `HS256` |
-| `JWT_EXPIRE_HOURS` | Token过期时间(小时) | `24` |
+| `JWT_SECRET` | JWT 密钥（⚠️ 生产环境必须修改） | `your-secret-key...` |
+| `JWT_EXPIRE_HOURS` | Token 过期时间 | `24` |
+| `AUTH_ENABLED` | 是否启用认证中间件 | `true` |
 
 > ⚠️ **安全提醒**：生产环境务必修改 `JWT_SECRET` 为强密钥！
 
 ---
 
-## 📚 核心概念
+## 🖥️ CLI 工具速查
 
-### 三层架构
-
-ThinkPython 采用经典的三层架构，职责清晰：
-
-```
-HTTP请求 → Controller → Service → Model → 数据库
-              ↓             ↓           ↓
-           参数验证      业务逻辑     表结构定义
-           响应返回      数据处理     数据映射
-```
-
-| 层级 | 职责 | 位置 |
-|------|------|------|
-| **Controller** | 接收HTTP请求，参数验证，返回响应 | `app/{module}/controller/` |
-| **Service** | 处理业务逻辑，调用Model操作数据 | `app/{module}/service/` |
-| **Model** | 定义数据库表结构，数据映射 | `app/{module}/model/` |
-
-### 依赖注入
-
-使用 FastAPI 的 `Depends` 实现数据库会话注入：
-
-```python
-from fastapi import Depends
-from sqlalchemy.ext.asyncio import AsyncSession
-from core.database import get_db
-
-@self.router.get("/user/list")
-async def get_users(db: AsyncSession = Depends(get_db)):
-    # db 是自动管理的数据库会话
-    # 请求结束时自动提交/回滚并关闭连接
-    service = UserService(db)
-    return await service.get_all()
+```bash
+python think.py run                  # 启动服务器
+python think.py make-crud user       # 根据数据库表结构生成 CRUD 三层代码
+python think.py make-controller User # 创建控制器
+python think.py make-model User      # 创建数据模型
+python think.py make-service User    # 创建服务层
+python think.py make-module order    # 创建新模块
+python think.py db-migrate           # 数据库迁移
+python think.py list-routes          # 列出所有路由
 ```
 
-### 异常处理
+> 💡 **make-crud**：配置好数据库后，一条命令 `python think.py make-crud user` 即可根据 `user` 表结构自动生成 Model、Controller、Service 三层完整代码，包含字段类型、注释、Pydantic 验证等，详见 [make-crud 文档](docs/make-crud.md)。
 
-框架内置多种异常类，可抛出异常自动返回统一格式：
+---
 
-```python
-from core.exception import NotFoundException, UnauthorizedException
+## 📖 文档中心
 
-@self.router.get("/user/{user_id}")
-async def get_user(user_id: int):
-    user = await service.get_by_id(user_id)
-    if not user:
-        raise NotFoundException(f"用户 {user_id} 不存在")
-    # 自动返回: {"code": 404, "message": "用户 1 不存在", "data": null}
+完整教程已移至 `docs/` 目录，按需查阅：
+
+| 文档 | 说明 |
+|------|------|
+| [5分钟创建第一个 API](docs/getting-started.md) | 从零开始，创建完整的 CRUD 接口 |
+| [数据库配置](docs/database.md) | MySQL / PostgreSQL / MSSQL 配置教程 |
+| [缓存使用](docs/cache.md) | Redis / Memcached 配置教程 |
+| [多模块模式](docs/modules.md) | 项目拆分与模块管理 |
+| [公共模块](docs/common.md) | 跨模块共享代码的最佳实践 |
+| [认证机制](docs/auth.md) | JWT 认证、免验证路由配置 |
+| [Excel 工具](docs/excel.md) | Excel 导入导出使用指南 |
+| [文件工具](docs/file.md) | 文件上传下载使用指南 |
+
+---
+
+## 📦 统一响应格式
+
+```json
+{
+  "code": 200,
+  "message": "success",
+  "data": {}
+}
 ```
+
+| 方法 | 说明 |
+|------|------|
+| `self.success(data, message)` | 成功响应 |
+| `self.error(message, code)` | 错误响应 |
+| `self.paginate(items, total, page, page_size)` | 分页响应 |
 
 ---
 
 ## ❓ 常见问题
 
-### Q1: 启动时提示 "模块未找到" 错误？
+### Q: 如何切换多模块模式？
 
-**原因**：依赖未安装或安装不完整。
-
-**解决**：
-```bash
-# 重新安装依赖
-pip install -r requirements.txt --upgrade
-
-# 如果使用虚拟环境，确保已激活
-```
-
-### Q2: SQLite 数据库文件在哪里？
-
-默认在 `./data/database.db`。如果没有 `data` 目录，会自动创建。
-
-你也可以修改路径：
+修改 `.env`：
 ```env
-DB_SQLITE_PATH=D:/my_project/data/mydb.db
+MODULE_MODE=multi
+ENABLED_MODULES=admin,api
 ```
 
-### Q3: 如何查看执行的 SQL 语句？
+### Q: SQLite 数据库文件在哪？
 
-开发时可以开启 SQL 打印：
+默认在 `./data/database.db`，会自动创建。
+
+### Q: 如何免验证登录、注册等接口？
+
+在控制器中配置白名单：
+```python
+class AuthController(BaseController):
+    SKIP_AUTH_ROUTES = ["POST /auth/login", "POST /auth/register"]
+```
+详见 [认证机制文档](docs/auth.md)。
+
+### Q: 如何查看执行的 SQL 语句？
+
 ```env
 DB_ECHO=True
 ```
 
-### Q4: 热重载不生效？
+### Q: 生产部署注意什么？
 
-确保在调试模式下：
-```env
-APP_DEBUG=True
-```
-
-或者使用命令：
-```bash
-python think.py run
-```
-
-### Q5: 跨域问题如何解决？
-
-框架默认允许所有跨域请求（`CORS_ORIGINS=*`）。生产环境建议指定域名：
-```env
-CORS_ORIGINS=http://localhost:3000,https://yourdomain.com
-```
-
-### Q6: 如何自定义响应格式？
-
-在控制器中使用 `self.success()` 和 `self.error()` 方法：
-```python
-# 成功响应
-return self.success(data={"key": "value"}, message="自定义消息")
-
-# 错误响应
-return self.error("错误消息", code=400)
-
-# 分页响应
-return self.paginate(items, total, page, page_size)
-```
-
-### Q7: 如何添加中间件？
-
-在 `middleware/__init__.py` 中定义，然后在 `main.py` 的 `create_app()` 函数中注册：
-```python
-from middleware import your_middleware
-
-app.middleware("http")(your_middleware)
-```
-
-### Q8: 生产部署需要注意什么？
-
-1. 设置 `APP_DEBUG=False`
+1. `APP_DEBUG=False`
 2. 修改 `JWT_SECRET` 为强密钥
 3. 设置正确的 `CORS_ORIGINS`
 4. 使用 Gunicorn 或 Uvicorn workers 运行
-5. 配置 Nginx 反向代理
-6. 使用 MySQL/PostgreSQL 替代 SQLite
 
 ---
 
@@ -1145,21 +234,11 @@ ThinkPython 采用 [MIT License](LICENSE) 开源协议，完全免费，可商�
 
 ## 🤝 贡献
 
-欢迎参与项目贡献！
-
 1. Fork 本仓库
-2. 创建你的特性分支 (`git checkout -b feature/AmazingFeature`)
-3. 提交你的改动 (`git commit -m 'Add some AmazingFeature'`)
-4. 推送到分支 (`git push origin feature/AmazingFeature`)
+2. 创建特性分支 (`git checkout -b feature/your-feature`)
+3. 提交改动 (`git commit -m 'Add your feature'`)
+4. 推送分支 (`git push origin feature/your-feature`)
 5. 提交 Pull Request
-
----
-
-## 💬 支持与反馈
-
-- 📖 详细文档：[docs/](docs/)
-- 🐛 问题反馈：[gitee Issues](https://gitee.com/hongxinge/think-python/issues)
-- ⭐ 觉得好用请 Star 支持，让更多人看到！
 
 ---
 

@@ -103,11 +103,12 @@ def register_multi_modules(main_router: APIRouter):
     
     if is_auto_discover:
         # 自动发现模式：扫描 app/ 下所有包含 controller/ 子目录的模块
+        # 注意：common 模块是公共代码目录，不作为独立模块注册路由
         logger.info("模块模式: 自动发现（加载所有模块）")
         discovered_modules = []
         if app_dir.exists():
             for item in app_dir.iterdir():
-                if item.is_dir() and item.name not in ("__pycache__",) and not item.name.startswith("_"):
+                if item.is_dir() and item.name not in ("__pycache__", "common") and not item.name.startswith("_"):
                     # 检查是否包含 controller 子目录
                     if (item / "controller").exists():
                         discovered_modules.append(item.name)

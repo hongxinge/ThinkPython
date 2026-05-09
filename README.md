@@ -506,6 +506,227 @@ curl http://localhost:8000/profile \
 
 ---
 
+### 教程6：认证机制与免验证路由配置
+
+ThinkPython 采用**"默认认证 + 白名单跳过"**的安全策略，提供三种灵活的方式配置免验证接口（如登录、注册、健康检查）。
+
+#### 默认行为
+
+**默认所有接口都需要 JWT Token 认证**。如果请求未携带有效 Token，框架会自动返回 401 错误：
+
+```json
+{
+  "code": 401,
+  "message": "未提供认证 Token，请先登录",
+  "data": null
+}
+```
+
+#### 方式一：全局白名单（系统级免验证）
+
+适用于整个系统级别的公开接口，如健康检查、API 文档等。
+
+**位置**: `config/auth.py`
+
+```python
+# 全局免验证路径列表
+SKIP_AUTH_PATHS = [
+    "/health",            # 健康检查
+    "/docs",              # Swagger API 文档
+    "/redoc",             # ReDoc API 文档
+    "/openapi.json",      # OpenAPI Schema
+    "/favicon.ico",       # 网站图标
+]
+```
+
+**特点**：配置一次，全局生效，支持前缀匹配（如 `/docs` 会匹配 `/docs` 和 `/docs/`）。
+
+#### 方式二：控制器级白名单（最推荐，模块级免验证）
+
+适用于业务模块中的公开接口，如登录、注册、忘记密码等。
+
+**使用方法**：在控制器类中定义 `SKIP_AUTH_ROUTES` 属性，声明哪些接口免验证：
+
+```python
+from core.base_controller import BaseController
+
+class AuthController(BaseController):
+    """认证控制器"""
+    
+    # ✅ 只需配置一次，以下接口免验证
+    # 格式: "HTTP方法 /路由路径"
+    SKIP_AUTH_ROUTES = [
+        "POST /auth/login",           # 登录接口免验证
+        "POST /auth/register",        # 注册接口免验证
+        "POST /auth/forgot-password", # 忘记密码免验证
+    ]
+    
+    def _setup_routes(self):
+        # ✅ 免验证接口 - 无需任何装饰器
+        @self.router.post("/auth/login")
+        async def login(data: LoginRequest):
+            return self.success(data={"token": "..."})
+        
+        # ✅ 免验证接口 - 无需任何装饰器
+        @self.router.post("/auth/register")
+        async def register(data: RegisterRequest):
+            return self.success(data={"id": 1})
+        
+        # ✅ 需要认证的接口 - 也无需装饰器，中间件自动拦截
+        @self.router.get("/auth/profile")
+        async def get_profile(request: Request):
+            user = self.get_current_user(request)
+            return self.success(data={"user_id": user.user_id})
+```
+
+**特点**：配置一次，控制器内所有匹配路径自动放行，其余接口自动拦截。
+
+**SKIP_AUTH_ROUTES 配置格式**：
+| 格式 | 说明 | 示例 |
+|------|------|------|
+| `"POST /auth/login"` | 精确匹配（方法+路径） | 只允许 POST 方法免验证 |
+| `"/auth/login"` | 仅路径匹配 | 所有 HTTP 方法都免验证 |
+| `"GET /api/*"` | 通配符匹配 | GET /api/xxx 全部免验证 |
+
+#### 方式三：装饰器标记（细粒度控制）
+
+适用于单个接口的免验证标记，灵活度最高。
+
+**使用方法**：在路由函数上添加 `@skip_auth` 装饰器：
+
+```python
+from helpers.auth import skip_auth
+
+class AuthController(BaseController):
+    def _setup_routes(self):
+        # ✅ 使用装饰器标记单个接口免验证
+        @self.router.post("/auth/login")
+        @skip_auth
+        async def login(data: LoginRequest):
+            return self.success(data={"token": "..."})
+```
+
+**特点**：优先级最高，可以覆盖白名单配置。
+
+#### 三种方式对比
+
+| 方式 | 配置位置 | 适用场景 | 推荐指数 |
+|:---:|:---|:---|:---:|
+| 全局白名单 | `config/auth.py` | 系统级接口（/health, /docs） | ⭐⭐⭐ |
+| **控制器白名单** | 控制器 `SKIP_AUTH_ROUTES` | 模块级接口（登录、注册） | ⭐⭐⭐⭐⭐ |
+| 装饰器 | `@skip_auth` | 单个接口的细粒度控制 | ⭐⭐⭐⭐ |
+
+#### 完整示例：登录/注册/个人中心
+
+框架已内置完整的认证示例，位于 `app/api/controller/auth_controller.py`：
+
+```bash
+# 1. 登录（免验证）
+curl -X POST http://localhost:8000/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username": "admin", "password": "123456"}'
+
+# 返回：
+# {
+#   "code": 200,
+#   "message": "登录成功",
+#   "data": {
+#     "token": "eyJhbGciOiJIUzI1NiIs...",
+#     "user_id": 1,
+#     "username": "admin"
+#   }
+# }
+
+# 2. 注册（免验证）
+curl -X POST http://localhost:8000/api/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{"username": "newuser", "password": "123456", "email": "new@example.com"}'
+
+# 3. 获取个人信息（需要 Token）
+curl -X GET http://localhost:8000/api/auth/profile \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIs..."
+
+# 返回：
+# {
+#   "code": 200,
+#   "data": {
+#     "user_id": 1,
+#     "username": "admin",
+#     "email": "admin@example.com"
+#   }
+# }
+```
+
+#### 获取当前用户信息
+
+在需要认证的接口中，通过 `self.get_current_user(request)` 获取当前登录用户：
+
+```python
+from core.base_controller import BaseController
+from app.common.controller.base_auth_controller import BaseAuthController
+
+class ProfileController(BaseAuthController):
+    """个人中心控制器"""
+    
+    def _setup_routes(self):
+        @self.router.get("/profile")
+        async def get_profile(request: Request):
+            # ✅ 获取当前登录用户信息（由中间件自动注入）
+            user = self.get_current_user(request)
+            
+            return self.success(data={
+                "user_id": user.user_id,
+                "username": user.username,
+            })
+```
+
+#### 认证相关配置项
+
+在 `config/auth.py` 中可以配置更多认证参数：
+
+```python
+# JWT 配置
+JWT_SECRET = "your-secret-key"      # JWT 密钥（生产环境必须修改）
+JWT_ALGORITHM = "HS256"             # 签名算法
+JWT_EXPIRE_HOURS = 24               # Token 过期时间（小时）
+JWT_REFRESH_HOURS = 2               # Token 刷新窗口期（小时）
+
+# 登录安全策略
+LOGIN_MAX_ATTEMPTS = 5              # 登录失败最大尝试次数
+LOGIN_LOCK_DURATION = 30            # 账号锁定时长（分钟）
+
+# 全局开关
+AUTH_ENABLED = True                 # 是否启用全局认证中间件
+```
+
+> ⚠️ **安全提醒**：生产环境务必修改 `JWT_SECRET` 为强随机字符串！
+
+#### 认证流程图
+
+```
+请求进入
+    ↓
+全局白名单检查 ──匹配──→ 放行
+    ↓不匹配
+控制器白名单检查 ──匹配──→ 放行
+    ↓不匹配
+装饰器检查 ──标记──→ 放行
+    ↓未标记
+验证 Authorization 头
+    ↓缺失
+返回 401 错误
+    ↓有 Token
+验证 Token 签名和过期时间
+    ↓无效/过期
+返回 401 错误
+    ↓有效
+注入 user 到 request.state
+    ↓
+放行到业务逻辑
+```
+
+---
+
 ## 🏗️ 项目结构
 
 ```

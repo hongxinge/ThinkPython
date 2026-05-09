@@ -5,12 +5,22 @@ ThinkPython JWT 认证工具
 - create_token(): 创建 JWT Token
 - decode_token(): 解析并验证 JWT Token
 - get_token_from_header(): 从 HTTP 请求头中提取 Token
+- skip_auth: 装饰器，标记单个接口免验证
+- require_auth: FastAPI 依赖注入，自动验证 Token 并返回当前用户信息
+- CurrentUser: 当前登录用户信息模型
 
-JWT 认证流程：
-1. 用户登录成功后，服务端调用 create_token() 生成 Token 返回给客户端
-2. 客户端在后续请求中将 Token 放在 Authorization 请求头中
-3. 服务端调用 decode_token() 验证 Token 有效性并获取用户信息
-4. get_token_from_header() 用于从请求头中提取 Token 字符串
+认证方式（三种，可混合使用）：
+    方式1: 全局白名单（config/auth.py 中的 SKIP_AUTH_PATHS）
+           - 适用于系统级接口（/health, /docs）
+           - 配置一次，全局生效
+    
+    方式2: 控制器级白名单（SKIP_AUTH_ROUTES 属性）
+           - 适用于模块级接口（登录、注册）
+           - 在控制器类中定义一次即可
+    
+    方式3: 装饰器标记（@skip_auth）
+           - 适用于单个接口的细粒度控制
+           - 在函数上加 @skip_auth 装饰器
 
 安全注意事项：
 - JWT_SECRET 必须通过环境变量配置，切勿硬编码
@@ -18,7 +28,7 @@ JWT 认证流程：
 - Token 有过期时间，过期后需要重新登录
 
 使用示例:
-    from helpers.auth import create_token, decode_token, get_token_from_header
+    from helpers.auth import create_token, decode_token, skip_auth, require_auth, CurrentUser
     
     # 登录成功后生成 Token
     token = create_token(user_id=1, extra_data={"role": "admin"})
@@ -30,11 +40,25 @@ JWT 认证流程：
     
     # 从请求头获取 Token
     token = get_token_from_header("Bearer eyJhbGciOiJIUzI1NiIs...")
+    
+    # 方式3: 装饰器标记免验证
+    @router.post("/login")
+    @skip_auth
+    async def login():
+        pass
+    
+    # 需要验证的接口（自动注入当前用户）
+    @router.get("/profile")
+    async def profile(user: CurrentUser = Depends(require_auth)):
+        return {"user_id": user.user_id}
 """
 import os
 import jwt
+from functools import wraps
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any
+from fastapi import Header, HTTPException, Depends, Request, status
+from pydantic import BaseModel
 
 # 从环境变量读取 JWT 配置，避免硬编码敏感信息
 # JWT_SECRET: 签名密钥，用于加密和验证 Token
@@ -43,6 +67,21 @@ from typing import Optional, Dict, Any
 JWT_SECRET = os.getenv("JWT_SECRET", "your-secret-key-change-this-in-production")
 JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
 JWT_EXPIRE_HOURS = int(os.getenv("JWT_EXPIRE_HOURS", "24"))
+
+
+class CurrentUser(BaseModel):
+    """当前登录用户信息
+    
+    通过 require_auth 依赖注入自动获取，包含从 Token 中解析的用户信息。
+    
+    Attributes:
+        user_id: 用户 ID
+        username: 用户名（可选，取决于 Token 中是否包含）
+        payload: Token 的完整载荷数据
+    """
+    user_id: int
+    username: Optional[str] = None
+    payload: Optional[Dict[str, Any]] = None
 
 
 def create_token(user_id: int, extra_data: Optional[Dict] = None) -> str:
@@ -147,3 +186,122 @@ def get_token_from_header(authorization: Optional[str] = None) -> Optional[str]:
     if len(parts) == 2 and parts[0].lower() == 'bearer':
         return parts[1]
     return None
+
+
+# ==============================
+# 认证装饰器和依赖注入
+# ==============================
+
+def skip_auth(func):
+    """免验证接口装饰器（方式3）
+    
+    标记该接口不需要 JWT 认证，即使在全局认证开启的情况下也能直接访问。
+    适用于登录、注册、忘记密码等公开接口。
+    
+    注意：
+        此装饰器优先级最高，会覆盖全局白名单和控制器白名单的配置。
+        如果已经使用了 SKIP_AUTH_ROUTES 配置，则无需使用此装饰器。
+    
+    使用示例:
+        class AuthController(BaseController):
+            @self.router.post("/login", summary="用户登录")
+            @skip_auth
+            async def login(data: LoginRequest):
+                # 无需 Token，任何人都可以访问
+                result = await auth_service.login(data.username, data.password)
+                return self.success(data={"token": result["token"]})
+            
+            @self.router.post("/register", summary="用户注册")
+            @skip_auth
+            async def register(data: RegisterRequest):
+                # 无需 Token，任何人都可以访问
+                user = await user_service.create(data)
+                return self.success(data={"id": user.id})
+    """
+    @wraps(func)
+    async def wrapper(*args, **kwargs):
+        return await func(*args, **kwargs)
+    
+    # 标记为跳过认证（供中间件识别）
+    wrapper._skip_auth = True
+    return wrapper
+
+
+async def require_auth(
+    authorization: Optional[str] = Header(None),
+) -> CurrentUser:
+    """FastAPI 依赖注入 - 自动验证 JWT Token 并返回当前用户信息
+    
+    在需要认证的接口中使用此依赖，自动从请求头中提取并验证 Token。
+    Token 无效或缺失时自动返回 401 错误，无需在业务代码中处理认证逻辑。
+    
+    注意：
+        当启用了全局认证中间件时，此依赖注入是可选的。
+        因为中间件已经将 current_user 注入到 request.state 中。
+        此依赖注入适用于：
+        1. 未启用全局中间件的项目
+        2. 需要显式声明认证依赖的场景
+    
+    Args:
+        authorization: 请求头中的 Authorization 字段（自动注入），格式为 "Bearer <token>"
+        
+    Returns:
+        CurrentUser: 当前登录用户信息，包含 user_id、username 和完整 payload
+        
+    Raises:
+        HTTPException: Token 缺失、无效或过期时抛出 401 异常
+        
+    使用示例:
+        from helpers.auth import require_auth, CurrentUser
+        
+        @router.get("/profile", summary="获取个人信息")
+        async def get_profile(
+            user: CurrentUser = Depends(require_auth)
+        ):
+            # user 已自动包含验证通过的当前用户信息
+            return self.success(data={
+                "user_id": user.user_id,
+                "username": user.username,
+            })
+        
+        @router.put("/profile", summary="修改个人信息")
+        async def update_profile(
+            data: UpdateProfileRequest,
+            user: CurrentUser = Depends(require_auth)
+        ):
+            # 直接使用 user.user_id 更新当前用户的数据
+            await user_service.update(user.user_id, data)
+            return self.success(message="更新成功")
+    """
+    # 检查 Authorization 头是否存在
+    if not authorization:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="未提供认证 Token，请先登录",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    # 提取 Token
+    token = get_token_from_header(authorization)
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token 格式错误，应为 Bearer <token>",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    # 验证 Token
+    payload = decode_token(token)
+    if not payload:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token 无效或已过期，请重新登录",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    # 构造当前用户信息
+    return CurrentUser(
+        user_id=payload.get("user_id", 0),
+        username=payload.get("username"),
+        payload=payload,
+    )

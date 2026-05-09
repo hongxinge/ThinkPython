@@ -34,6 +34,7 @@ from config.app import APP_CONFIG
 from middleware import setup_cors, request_log_middleware
 from core.database import init_database, close_database
 from core.cache import init_cache, close_cache
+from core.auth_middleware import auth_middleware
 from core.exception import (
     app_exception_handler,
     validation_exception_handler,
@@ -116,6 +117,9 @@ def create_app() -> FastAPI:
     # ===== 配置中间件 =====
     setup_cors(app)  # 添加 CORS 跨域中间件
     app.middleware("http")(request_log_middleware)  # 添加请求日志中间件
+    
+    # 注册全局认证中间件
+    app.middleware("http")(auth_middleware)
     
     # ===== 注册异常处理器 =====
     # 处理自定义应用异常（AppException 及其子类）

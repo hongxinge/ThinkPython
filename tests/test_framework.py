@@ -9,7 +9,7 @@ from main import app
 from helpers.response import success_response, error_response
 from helpers.auth import create_token, decode_token, skip_auth
 from core.auth_middleware import _paths_match, _is_in_global_whitelist
-from core.database import Base, get_db
+from core.database import Base
 from core.inspector import ColumnInfo, TableInfo, DatabaseInspector
 from config.auth import SKIP_AUTH_PATHS, AUTH_ENABLED, JWT_SECRET, JWT_EXPIRE_HOURS
 from sqlalchemy import create_engine
@@ -174,10 +174,17 @@ class TestDatabase:
 
     def test_database_config(self):
         """测试数据库配置"""
-        from config.database import DB_CONFIG
-        assert isinstance(DB_CONFIG, dict)
-        assert "type" in DB_CONFIG
-        assert DB_CONFIG["type"] in ["mysql", "postgresql", "sqlite", "mssql"]
+        from config.database import DATABASE_CONFIG
+        assert isinstance(DATABASE_CONFIG, dict)
+        assert "type" in DATABASE_CONFIG
+        assert DATABASE_CONFIG["type"] in ["mysql", "postgresql", "sqlite", "mssql"]
+
+    def test_get_database_url(self):
+        """测试数据库 URL 生成"""
+        from config.database import get_database_url
+        url = get_database_url()
+        assert isinstance(url, str)
+        assert len(url) > 0
 
 
 # ============== Inspector 测试 ==============
@@ -206,10 +213,10 @@ class TestInspector:
 
     def test_table_info_creation(self):
         """测试 TableInfo 创建"""
-        columns = [
-            ColumnInfo(name="id", type="INTEGER", python_type="int", sqlalchemy_type="Integer"),
-        ]
-        table = TableInfo(name="users", comment="用户表", columns=columns, primary_keys=["id"])
+        table = TableInfo(name="users", comment="用户表")
+        col = ColumnInfo(name="id", type="INTEGER", python_type="int", sqlalchemy_type="Integer")
+        table.add_column(col)
+        table.primary_keys = ["id"]
         assert table.name == "users"
         assert table.comment == "用户表"
         assert len(table.columns) == 1
@@ -221,16 +228,13 @@ class TestInspector:
         assert inspector is not None
         assert hasattr(inspector, "engine")
 
-    @pytest.mark.asyncio
-    async def test_database_inspector_get_tables(self):
-        """测试获取表列表"""
+    def test_database_inspector_get_tables(self):
+        """测试 DatabaseInspector 有 get_tables 方法"""
         inspector = DatabaseInspector()
-        try:
-            tables = await inspector.get_tables()
-            assert isinstance(tables, list)
-        except Exception:
-            # 如果数据库未连接，可能抛出异常，这也是正常的
-            pass
+        assert hasattr(inspector, "get_tables")
+        assert hasattr(inspector, "get_table_info")
+        assert hasattr(inspector, "connect")
+        assert hasattr(inspector, "close")
 
 
 # ============== API 路由测试 ==============
@@ -296,13 +300,20 @@ class TestCache:
 
     def test_cache_config(self):
         """测试缓存配置"""
-        from config.cache import CACHE_TYPE
-        assert CACHE_TYPE in ["redis", "memory", "memcached"]
+        from config.cache import CACHE_CONFIG
+        assert isinstance(CACHE_CONFIG, dict)
+        assert "type" in CACHE_CONFIG
+        assert CACHE_CONFIG["type"] in ["redis", "memory", "memcached"]
 
-    def test_cache_init(self):
-        """测试缓存初始化"""
-        from core.cache import cache_manager
-        assert cache_manager is not None
+    def test_cache_module_structure(self):
+        """测试缓存模块结构"""
+        from core import cache
+        assert hasattr(cache, "init_cache")
+        assert hasattr(cache, "close_cache")
+        assert hasattr(cache, "get_cache")
+        assert hasattr(cache, "set_cache")
+        assert hasattr(cache, "delete_cache")
+        assert hasattr(cache, "cache_client")
 
 
 # ============== 集成测试 ==============

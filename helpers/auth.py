@@ -55,7 +55,7 @@ ThinkPython JWT 认证工具
 import os
 import jwt
 from functools import wraps
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any
 from fastapi import Header, HTTPException, Depends, Request, status
 from pydantic import BaseModel
@@ -114,8 +114,8 @@ def create_token(user_id: int, extra_data: Optional[Dict] = None) -> str:
     """
     payload = {
         "user_id": user_id,  # 用户标识
-        "exp": datetime.utcnow() + timedelta(hours=JWT_EXPIRE_HOURS),  # 过期时间（UTC）
-        "iat": datetime.utcnow(),  # 签发时间（UTC）
+        "exp": datetime.now(timezone.utc) + timedelta(hours=JWT_EXPIRE_HOURS),  # 过期时间（UTC）
+        "iat": datetime.now(timezone.utc),  # 签发时间（UTC）
     }
     # 合并额外数据到 payload 中
     if extra_data:

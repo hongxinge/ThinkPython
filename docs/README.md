@@ -26,6 +26,15 @@
 | [Excel 工具](excel.md) | `ExcelUtil`：读取 Excel、导出 Excel、列名映射、创建下载响应 |
 | [文件工具](file.md) | `FileUtil`：上传文件、批量上传、下载响应、删除文件、获取文件信息 |
 
+## 进阶参考
+
+| 文档 | 说明 |
+|------|------|
+| [CLI 工具指南](cli.md) | 所有 think.py 命令的详细说明和用法 |
+| [配置说明](config.md) | 所有配置项的完整说明和默认值 |
+| [部署指南](deploy.md) | 生产环境部署步骤和注意事项 |
+| [API 使用示例](api.md) | 完整的 CRUD API 开发示例 |
+
 ## 推荐阅读顺序
 
 1. 先阅读 **[5 分钟创建第一个 API](getting-started.md)** 了解基本开发流程
@@ -34,11 +43,13 @@
 4. 如果项目需要用户系统，阅读 **认证机制** 了解 JWT 认证
 5. 根据项目规模选择 **单模块** 或 **多模块** 模式，阅读对应文档
 6. 需要导入导出或文件处理时，参考 **Excel 工具** 和 **文件工具** 文档
+7. 部署前阅读 **[部署指南](deploy.md)** 了解生产环境配置
 
 ## CLI 命令速查
 
 ```bash
 python think.py run                  # 启动服务器
+python think.py make-crud user       # 根据数据库表生成 CRUD 代码
 python think.py make-controller User # 创建控制器
 python think.py make-model User      # 创建数据模型
 python think.py make-service User    # 创建服务层

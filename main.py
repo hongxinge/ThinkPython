@@ -32,6 +32,7 @@ from loguru import logger
 
 from config.app import APP_CONFIG
 from middleware import setup_cors, request_log_middleware
+from middleware.ratelimit import setup_rate_limit
 from core.database import init_database, close_database
 from core.cache import init_cache, close_cache
 from core.auth_middleware import auth_middleware
@@ -117,6 +118,7 @@ def create_app() -> FastAPI:
     # ===== 配置中间件 =====
     setup_cors(app)  # 添加 CORS 跨域中间件
     app.middleware("http")(request_log_middleware)  # 添加请求日志中间件
+    setup_rate_limit(app)  # 添加 API 限流中间件
     
     # 注册全局认证中间件
     app.middleware("http")(auth_middleware)

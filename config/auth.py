@@ -50,7 +50,7 @@ SKIP_AUTH_PATHS = [
 AUTH_ENABLED = os.getenv("AUTH_ENABLED", "true").lower() == "true"
 
 # ==============================
-# JWT 配置
+# JWT 配置（双 Token 机制）
 # ==============================
 
 # JWT 密钥（建议通过环境变量配置，生产环境使用强随机密钥）
@@ -59,11 +59,29 @@ JWT_SECRET = os.getenv("JWT_SECRET", "your-secret-key-change-this-in-production"
 # JWT 签名算法
 JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
 
-# Token 过期时间（小时）
-JWT_EXPIRE_HOURS = int(os.getenv("JWT_EXPIRE_HOURS", "24"))
+# Access Token 过期时间（小时），用于日常接口访问
+# 建议设置较短时间（1-2小时），提高安全性
+JWT_ACCESS_TOKEN_EXPIRE_HOURS = int(os.getenv("JWT_ACCESS_TOKEN_EXPIRE_HOURS", "2"))
 
-# Token 刷新窗口期（小时），在过期前此时间段内可以无感刷新
-JWT_REFRESH_HOURS = int(os.getenv("JWT_REFRESH_HOURS", "2"))
+# Refresh Token 过期时间（天），用于刷新 Access Token
+# 建议设置较长时间（7-30天），减少用户登录频率
+JWT_REFRESH_TOKEN_EXPIRE_DAYS = int(os.getenv("JWT_REFRESH_TOKEN_EXPIRE_DAYS", "7"))
+
+# Refresh Token 是否可轮换（True = 每次刷新生成新的 Refresh Token）
+# 开启后更安全，旧 Refresh Token 立即失效
+JWT_REFRESH_TOKEN_ROTATE = os.getenv("JWT_REFRESH_TOKEN_ROTATE", "true").lower() == "true"
+
+# ==============================
+# Token 黑名单配置（用于主动注销）
+# ==============================
+
+# 是否启用 Token 黑名单（需要 Redis 支持）
+# True: 用户登出时将 Token 加入黑名单，有效期内无法再次使用
+# False: 不启用黑名单，Token 只能等待自然过期
+TOKEN_BLACKLIST_ENABLED = os.getenv("TOKEN_BLACKLIST_ENABLED", "false").lower() == "true"
+
+# Token 黑名单 Redis Key 前缀
+TOKEN_BLACKLIST_PREFIX = "token:blacklist:"
 
 # ==============================
 # 登录安全策略

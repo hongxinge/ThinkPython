@@ -842,11 +842,34 @@ class MakeModuleCommand(Command):
 class DBMigrateCommand(Command):
     """数据库迁移命令
     
-    连接数据库并自动创建所有 ORM 模型对应的数据表。
-    基于 SQLAlchemy 的 Base.metadata.create_all() 实现。
+    支持两种迁移模式：
+    1. 简单模式（默认）：使用 Base.metadata.create_all() 创建新表
+       适用于首次初始化数据库，或小型项目
     
-    注意：此命令只创建新表，不会修改已存在的表结构。
-    如果需要修改表结构，请使用 Alembic 等数据库迁移工具。
+    2. Alembic 模式：使用 Alembic 进行版本化迁移
+       适用于生产环境，支持：
+       - 自动生成迁移脚本（检测模型变更）
+       - 升级/降级数据库结构
+       - 查看迁移历史
+    
+    使用方式:
+        # 简单模式：创建所有模型对应的表
+        python think.py db-migrate
+        
+        # Alembic 模式：自动生成迁移脚本（检测模型变更）
+        python think.py db-migrate --auto -m "添加用户表"
+        
+        # Alembic 模式：执行所有未应用的迁移
+        python think.py db-migrate --upgrade
+        
+        # Alembic 模式：回滚上一次迁移
+        python think.py db-migrate --downgrade
+        
+        # Alembic 模式：查看迁移历史
+        python think.py db-migrate --history
+        
+        # Alembic 模式：查看当前数据库版本
+        python think.py db-migrate --current
     """
     
     def __init__(self):
@@ -856,23 +879,109 @@ class DBMigrateCommand(Command):
         """执行数据库迁移
         
         Args:
-            args: 命令行参数对象（此命令无需额外参数）
+            args: 命令行参数对象
+                --auto: 自动生成 Alembic 迁移脚本
+                --upgrade: 执行所有未应用的 Alembic 迁移
+                --downgrade: 回滚上一次 Alembic 迁移
+                --history: 查看 Alembic 迁移历史
+                --current: 查看当前数据库 Alembic 版本
+                -m, --message: 迁移描述信息（与 --auto 配合使用）
         """
+        # 判断是否使用 Alembic 模式
+        use_alembic = any([
+            getattr(args, "auto", False),
+            getattr(args, "upgrade", False),
+            getattr(args, "downgrade", False),
+            getattr(args, "history", False),
+            getattr(args, "current", False),
+        ])
+        
+        if use_alembic:
+            self._run_alembic(args)
+        else:
+            self._run_simple_migration()
+    
+    def _run_simple_migration(self):
+        """简单模式：使用 create_all 创建表"""
         import asyncio
         from core.database import init_database, Base, engine
         
         async def run_migration():
-            # 初始化数据库连接
             await init_database()
-            # 创建所有模型对应的数据表（已存在的表会被跳过）
             async with engine.begin() as conn:
                 await conn.run_sync(Base.metadata.create_all)
-            print("✅ 数据库迁移完成")
+            print("✅ 数据库迁移完成（简单模式：已创建所有模型对应的表）")
+            print("💡 提示：如果需要版本化迁移，请使用 Alembic 模式：")
+            print("   python think.py db-migrate --auto -m '描述'")
         
         try:
             asyncio.run(run_migration())
         except Exception as e:
             print(f"❌ 数据库迁移失败: {e}")
+    
+    def _run_alembic(self, args: argparse.Namespace):
+        """Alembic 模式：使用 Alembic 进行版本化迁移"""
+        try:
+            from alembic.config import Config
+            from alembic import command as alembic_command
+        except ImportError:
+            print("❌ Alembic 未安装，请先运行: pip install alembic")
+            return
+        
+        alembic_ini = BASE_DIR / "alembic.ini"
+        if not alembic_ini.exists():
+            print("❌ alembic.ini 配置文件不存在")
+            print("💡 提示：请确保 alembic/ 目录结构完整")
+            return
+        
+        alembic_cfg = Config(str(alembic_ini))
+        
+        if getattr(args, "auto", False):
+            # 自动生成迁移脚本
+            message = getattr(args, "message", "auto migration")
+            print(f"🔄 正在生成迁移脚本: {message}")
+            try:
+                alembic_command.revision(alembic_cfg, autogenerate=True, message=message)
+                print("✅ 迁移脚本生成成功！")
+                print("💡 下一步: python think.py db-migrate --upgrade")
+            except Exception as e:
+                print(f"❌ 生成迁移脚本失败: {e}")
+        
+        elif getattr(args, "upgrade", False):
+            # 执行迁移（升级到最新版本）
+            print("🔄 正在执行数据库迁移...")
+            try:
+                alembic_command.upgrade(alembic_cfg, "head")
+                print("✅ 数据库迁移完成（Alembic 模式）")
+            except Exception as e:
+                print(f"❌ 数据库迁移失败: {e}")
+        
+        elif getattr(args, "downgrade", False):
+            # 回滚上一次迁移
+            print("🔄 正在回滚上一次迁移...")
+            try:
+                alembic_command.downgrade(alembic_cfg, "-1")
+                print("✅ 数据库回滚成功")
+            except Exception as e:
+                print(f"❌ 数据库回滚失败: {e}")
+        
+        elif getattr(args, "history", False):
+            # 查看迁移历史
+            print("📋 迁移历史:")
+            print("-" * 60)
+            try:
+                alembic_command.history(alembic_cfg)
+            except Exception as e:
+                print(f"❌ 查看历史失败: {e}")
+        
+        elif getattr(args, "current", False):
+            # 查看当前数据库版本
+            print("📍 当前数据库版本:")
+            print("-" * 60)
+            try:
+                alembic_command.current(alembic_cfg)
+            except Exception as e:
+                print(f"❌ 查看版本失败: {e}")
 
 
 class ListRoutesCommand(Command):
@@ -965,7 +1074,13 @@ def create_parser() -> argparse.ArgumentParser:
     mm_parser.add_argument("name", help="模块名称")
     
     # db-migrate 命令
-    subparsers.add_parser("db-migrate", help="执行数据库迁移")
+    db_parser = subparsers.add_parser("db-migrate", help="执行数据库迁移")
+    db_parser.add_argument("--auto", action="store_true", help="自动生成 Alembic 迁移脚本")
+    db_parser.add_argument("--upgrade", action="store_true", help="执行所有未应用的 Alembic 迁移")
+    db_parser.add_argument("--downgrade", action="store_true", help="回滚上一次 Alembic 迁移")
+    db_parser.add_argument("--history", action="store_true", help="查看 Alembic 迁移历史")
+    db_parser.add_argument("--current", action="store_true", help="查看当前数据库 Alembic 版本")
+    db_parser.add_argument("-m", "--message", default="auto migration", help="迁移描述信息")
     
     # list-routes 命令
     subparsers.add_parser("list-routes", help="列出所有路由")

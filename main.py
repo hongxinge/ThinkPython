@@ -55,8 +55,9 @@ async def lifespan(app: FastAPI):
     
     启动时执行：
     1. 打印应用名称和版本信息
-    2. 初始化数据库连接（连接池）
-    3. 初始化缓存连接（Redis 或 Memory）
+    2. 安全配置检查（JWT 密钥等）
+    3. 初始化数据库连接（连接池）
+    4. 初始化缓存连接（Redis 或 Memory）
     
     关闭时执行：
     1. 关闭数据库连接池
@@ -68,6 +69,19 @@ async def lifespan(app: FastAPI):
     # ===== 启动时执行 =====
     logger.info(f"🚀 {APP_CONFIG['name']} v{APP_CONFIG['version']} 启动中...")
     logger.info(f"📦 模块模式: {APP_CONFIG['module_mode']}")
+    
+    # 安全配置检查
+    try:
+        from config.auth import USING_DEFAULT_JWT_SECRET
+        if USING_DEFAULT_JWT_SECRET:
+            logger.warning(
+                "⚠️  检测到使用默认 JWT_SECRET，存在安全风险！\n"
+                "   请通过环境变量配置强随机密钥：\n"
+                "   export JWT_SECRET=$(openssl rand -hex 32)\n"
+                "   或在 .env 文件中添加：JWT_SECRET=<your-secret-key>"
+            )
+    except ImportError:
+        pass
     
     # 初始化数据库连接（创建连接池）
     await init_database()

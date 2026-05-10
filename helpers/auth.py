@@ -74,7 +74,8 @@ try:
     )
 except ImportError:
     # 向后兼容：如果配置不存在则使用默认值
-    JWT_SECRET = os.getenv("JWT_SECRET", "your-secret-key-change-this-in-production")
+    from config.auth import _DEFAULT_JWT_SECRET
+    JWT_SECRET = os.getenv("JWT_SECRET", _DEFAULT_JWT_SECRET)
     JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
     JWT_ACCESS_TOKEN_EXPIRE_HOURS = int(os.getenv("JWT_ACCESS_TOKEN_EXPIRE_HOURS", "2"))
     JWT_REFRESH_TOKEN_EXPIRE_DAYS = int(os.getenv("JWT_REFRESH_TOKEN_EXPIRE_DAYS", "7"))

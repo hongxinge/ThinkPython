@@ -53,8 +53,14 @@ AUTH_ENABLED = os.getenv("AUTH_ENABLED", "true").lower() == "true"
 # JWT 配置（双 Token 机制）
 # ==============================
 
+# JWT 默认密钥（用于检测是否未配置环境变量）
+_DEFAULT_JWT_SECRET = "your-secret-key-change-this-in-production"
+
 # JWT 密钥（建议通过环境变量配置，生产环境使用强随机密钥）
-JWT_SECRET = os.getenv("JWT_SECRET", "your-secret-key-change-this-in-production")
+JWT_SECRET = os.getenv("JWT_SECRET", _DEFAULT_JWT_SECRET)
+
+# 是否使用了默认密钥（用于启动时安全检查）
+USING_DEFAULT_JWT_SECRET = (JWT_SECRET == _DEFAULT_JWT_SECRET)
 
 # JWT 签名算法
 JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")

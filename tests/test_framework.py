@@ -11,7 +11,7 @@ from helpers.auth import create_token, decode_token, skip_auth
 from core.auth_middleware import _paths_match, _is_in_global_whitelist
 from core.database import Base
 from core.inspector import ColumnInfo, TableInfo, DatabaseInspector
-from config.auth import SKIP_AUTH_PATHS, AUTH_ENABLED, JWT_SECRET, JWT_EXPIRE_HOURS
+from config.auth import SKIP_AUTH_PATHS, AUTH_ENABLED, JWT_SECRET, JWT_ACCESS_TOKEN_EXPIRE_HOURS, JWT_REFRESH_TOKEN_EXPIRE_DAYS
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -153,8 +153,10 @@ class TestConfig:
         assert isinstance(AUTH_ENABLED, bool)
         assert isinstance(JWT_SECRET, str)
         assert len(JWT_SECRET) > 0
-        assert isinstance(JWT_EXPIRE_HOURS, (int, float))
-        assert JWT_EXPIRE_HOURS > 0
+        assert isinstance(JWT_ACCESS_TOKEN_EXPIRE_HOURS, (int, float))
+        assert JWT_ACCESS_TOKEN_EXPIRE_HOURS > 0
+        assert isinstance(JWT_REFRESH_TOKEN_EXPIRE_DAYS, (int, float))
+        assert JWT_REFRESH_TOKEN_EXPIRE_DAYS > 0
 
     def test_skip_auth_paths_not_empty(self):
         """测试跳过认证路径不为空"""
@@ -345,6 +347,126 @@ class TestIntegration:
         docs_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "docs")
         assert os.path.exists(docs_dir)
         assert os.path.exists(os.path.join(docs_dir, "README.md"))
+
+    def test_deploy_directory_exists(self):
+        """测试 deploy 目录存在"""
+        deploy_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "deploy")
+        assert os.path.exists(deploy_dir)
+        assert os.path.exists(os.path.join(deploy_dir, "README.md"))
+        assert os.path.exists(os.path.join(deploy_dir, "Dockerfile"))
+        assert os.path.exists(os.path.join(deploy_dir, "docker-compose.yml"))
+
+    def test_alembic_directory_exists(self):
+        """测试 alembic 目录存在"""
+        alembic_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "alembic")
+        assert os.path.exists(alembic_dir)
+        assert os.path.exists(os.path.join(alembic_dir, "env.py"))
+        assert os.path.exists(os.path.join(os.path.dirname(os.path.dirname(__file__)), "alembic.ini"))
+
+
+# ============== Token 刷新测试 ==============
+class TestTokenRefresh:
+    """Token 刷新机制测试"""
+
+    def test_create_access_token(self):
+        """测试创建 Access Token"""
+        from helpers.auth import create_token
+        token = create_token(user_id=1, extra_data={"username": "test"})
+        assert token is not None
+        assert isinstance(token, str)
+        assert len(token.split(".")) == 3  # JWT 有三部分
+
+    def test_create_refresh_token(self):
+        """测试创建 Refresh Token"""
+        from helpers.auth import create_refresh_token
+        token = create_refresh_token(user_id=1)
+        assert token is not None
+        assert isinstance(token, str)
+
+    def test_decode_access_token(self):
+        """测试解码 Access Token"""
+        from helpers.auth import create_token, decode_token
+        token = create_token(user_id=1, extra_data={"username": "test"})
+        payload = decode_token(token)
+        assert payload is not None
+        assert payload["user_id"] == 1
+        assert payload["type"] == "access"
+        assert "jti" in payload
+
+    def test_decode_refresh_token(self):
+        """测试解码 Refresh Token"""
+        from helpers.auth import create_refresh_token, decode_token
+        token = create_refresh_token(user_id=1)
+        payload = decode_token(token)
+        assert payload is not None
+        assert payload["user_id"] == 1
+        assert payload["type"] == "refresh"
+        assert "jti" in payload
+
+    def test_refresh_access_token(self):
+        """测试刷新 Access Token"""
+        from helpers.auth import create_refresh_token, refresh_access_token
+        refresh_token = create_refresh_token(user_id=1)
+        result = refresh_access_token(refresh_token)
+        assert "access_token" in result
+        assert "refresh_token" in result
+        assert result["token_type"] == "bearer"
+        assert "expires_in" in result
+
+    def test_invalid_refresh_token(self):
+        """测试无效 Refresh Token"""
+        from helpers.auth import refresh_access_token
+        try:
+            refresh_access_token("invalid.token.here")
+            assert False, "应该抛出 ValueError"
+        except ValueError:
+            pass
+
+    def test_access_token_used_as_refresh(self):
+        """测试 Access Token 不能用于刷新"""
+        from helpers.auth import create_token, refresh_access_token
+        access_token = create_token(user_id=1)
+        try:
+            refresh_access_token(access_token)
+            assert False, "应该抛出 ValueError"
+        except ValueError as e:
+            assert "类型" in str(e) or "type" in str(e).lower()
+
+
+# ============== 限流测试 ==============
+class TestRateLimit:
+    """API 限流测试"""
+
+    def test_rate_limit_config(self):
+        """测试限流配置"""
+        from config.ratelimit import (
+            RATE_LIMIT_ENABLED,
+            RATE_LIMIT_BACKEND,
+            RATE_LIMIT_RULES,
+        )
+        assert isinstance(RATE_LIMIT_ENABLED, bool)
+        assert RATE_LIMIT_BACKEND in ["redis", "memory"]
+        assert isinstance(RATE_LIMIT_RULES, dict)
+
+    def test_token_bucket_consume(self):
+        """测试令牌桶消耗"""
+        from middleware.ratelimit import TokenBucket
+        bucket = TokenBucket(rate=10, capacity=10)
+        assert bucket.consume() is True  # 应该成功
+        bucket.tokens = 0  # 清空令牌
+        assert bucket.consume() is False  # 应该失败
+
+    def test_memory_rate_limiter(self):
+        """测试内存限流器"""
+        from middleware.ratelimit import MemoryRateLimiter
+        limiter = MemoryRateLimiter()
+        assert limiter.is_allowed("test:key", rate=10, capacity=10) is True
+
+    def test_rate_limit_middleware_structure(self):
+        """测试限流中间件结构"""
+        from middleware.ratelimit import RateLimitMiddleware, setup_rate_limit
+        assert RateLimitMiddleware is not None
+        assert setup_rate_limit is not None
 
 
 # ============== 运行测试 ==============

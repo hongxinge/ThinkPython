@@ -1,0 +1,115 @@
+# ThinkPython Docker Compose - 完整生产环境示例
+# 包含：应用 + MySQL + Redis + Nginx
+# 使用方式: docker-compose up -d
+
+version: '3.8'
+
+services:
+  # ==============================
+  # 应用服务
+  # ==============================
+  app:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    container_name: thinkpython-app
+    restart: unless-stopped
+    environment:
+      - APP_DEBUG=false
+      - DB_TYPE=mysql
+      - DB_HOST=db
+      - DB_PORT=3306
+      - DB_NAME=thinkpython
+      - DB_USER=root
+      - DB_PASSWORD=${DB_PASSWORD:-secure_password_here}
+      - CACHE_TYPE=redis
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - JWT_SECRET=${JWT_SECRET:-change_this_to_a_secure_random_key}
+      - AUTH_ENABLED=true
+      - RATE_LIMIT_ENABLED=true
+      - RATE_LIMIT_BACKEND=redis
+    volumes:
+      - app-logs:/app/logs
+      - app-uploads:/app/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    networks:
+      - thinkpython-network
+
+  # ==============================
+  # MySQL 数据库
+  # ==============================
+  db:
+    image: mysql:8.0
+    container_name: thinkpython-db
+    restart: unless-stopped
+    environment:
+      - MYSQL_ROOT_PASSWORD=${DB_PASSWORD:-secure_password_here}
+      - MYSQL_DATABASE=thinkpython
+      - MYSQL_CHARSET=utf8mb4
+      - MYSQL_COLLATION=utf8mb4_unicode_ci
+    volumes:
+      - db-data:/var/lib/mysql
+      - ./mysql-init.sql:/docker-entrypoint-initdb.d/init.sql  # 可选：初始化脚本
+    ports:
+      - "3306:3306"  # 仅开发环境开放，生产环境应注释此行
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - thinkpython-network
+
+  # ==============================
+  # Redis 缓存
+  # ==============================
+  redis:
+    image: redis:7-alpine
+    container_name: thinkpython-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-}
+    volumes:
+      - redis-data:/data
+    ports:
+      - "6379:6379"  # 仅开发环境开放，生产环境应注释此行
+    networks:
+      - thinkpython-network
+
+  # ==============================
+  # Nginx 反向代理
+  # ==============================
+  nginx:
+    image: nginx:alpine
+    container_name: thinkpython-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro  # SSL 证书目录（需自行准备）
+    depends_on:
+      - app
+    networks:
+      - thinkpython-network
+
+# ==============================
+# 数据卷
+# ==============================
+volumes:
+  db-data:
+  redis-data:
+  app-logs:
+  app-uploads:
+
+# ==============================
+# 网络
+# ==============================
+networks:
+  thinkpython-network:
+    driver: bridge

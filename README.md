@@ -134,6 +134,22 @@ ThinkPython/
 
 > ⚠️ **安全提醒**：生产环境务必修改 `JWT_SECRET` 为强密钥！
 
+### 双 Token 机制
+
+| 变量 | 说明 | 默认值 |
+|------|------|--------|
+| `JWT_ACCESS_TOKEN_EXPIRE_HOURS` | Access Token 过期时间 | `2` |
+| `JWT_REFRESH_TOKEN_EXPIRE_DAYS` | Refresh Token 过期时间 | `7` |
+| `JWT_REFRESH_TOKEN_ROTATE` | Refresh Token 轮换机制 | `true` |
+
+### API 限流
+
+| 变量 | 说明 | 默认值 |
+|------|------|--------|
+| `RATE_LIMIT_ENABLED` | 是否启用限流 | `false` |
+| `RATE_LIMIT_BACKEND` | 限流后端 | `memory` |
+| `RATE_LIMIT_IP_REQUESTS` | IP 每分钟最大请求数 | `100` |
+
 ---
 
 ## 🖥️ CLI 工具速查
@@ -217,12 +233,17 @@ class AuthController(BaseController):
 DB_ECHO=True
 ```
 
-### Q: 生产部署注意什么？
+### Q: 生产部署方式有哪些？
 
-1. `APP_DEBUG=False`
-2. 修改 `JWT_SECRET` 为强密钥
-3. 设置正确的 `CORS_ORIGINS`
-4. 使用 Gunicorn 或 Uvicorn workers 运行
+ThinkPython 支持多种部署方式，按需选择：
+
+| 部署方式 | 适用场景 | 说明 |
+|---------|---------|------|
+| Uvicorn | 小型项目 | `uvicorn main:app --host 0.0.0.0 --port 8000` |
+| Gunicorn | 中型项目 | `gunicorn -c deploy/gunicorn.conf.py main:app -k uvicorn.workers.UvicornWorker` |
+| Docker Compose | 生产环境 | `cd deploy && docker-compose up -d` |
+
+完整的部署配置示例请参考 `deploy/` 目录，包含 Dockerfile、docker-compose.yml、Gunicorn 配置、Nginx 配置等。
 
 ---
 

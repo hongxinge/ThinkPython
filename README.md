@@ -36,8 +36,14 @@
 ### 1. 安装
 
 ```bash
+# GitHub
+git clone https://github.com/hongxinge/ThinkPython.git
+cd ThinkPython
+
+# 或 Gitee（国内镜像，更快）
 git clone https://gitee.com/hongxinge/think-python.git
 cd think-python
+
 pip install -r requirements.txt
 ```
 

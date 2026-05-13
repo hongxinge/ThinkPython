@@ -183,7 +183,7 @@ class {class_name}(BaseController):
         @self.router.post("/{name.lower()}", summary="创建{name}")
         async def create(request: {name}Request):
             # TODO: 调用Service层创建数据
-            return self.success(data=request.dict(), message="创建成功")
+            return self.success(data=request.model_dump(), message="创建成功")
         
         @self.router.put("/{name.lower()}/{{item_id}}", summary="更新{name}")
         async def update(item_id: int, request: {name}Request):
@@ -652,7 +652,7 @@ class {controller_name}(BaseController):
         ):
             """创建{class_name}"""
             service = {class_name}Service(db)
-            item = await service.create(request.dict())
+            item = await service.create(request.model_dump())
             return self.success(data=item, message="创建成功")
         
         @self.router.put("/{table_info.name.lower()}/{{item_id}}", summary="更新{class_name}")
@@ -663,7 +663,7 @@ class {controller_name}(BaseController):
         ):
             """更新{class_name}"""
             service = {class_name}Service(db)
-            item = await service.update(item_id, request.dict(exclude_unset=True))
+            item = await service.update(item_id, request.model_dump(exclude_unset=True))
             if not item:
                 return self.error(f"{class_name} {{item_id}} 不存在", 404)
             return self.success(data=item, message="更新成功")

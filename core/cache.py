@@ -238,14 +238,24 @@ async def init_cache():
         # 检查 Redis 依赖是否已安装
         if aioredis is None:
             raise ImportError("redis package is required for Redis cache. Install with: pip install redis")
-        redis_cfg = CACHE_CONFIG["redis"]
-        # 使用 from_url 方式创建 Redis 连接，自动管理连接池
-        cache_client = aioredis.from_url(
-            f"redis://{redis_cfg['host']}:{redis_cfg['port']}/{redis_cfg['db']}",
-            password=redis_cfg["password"],
-            max_connections=redis_cfg["max_connections"],
-            decode_responses=redis_cfg["decode_responses"],
-        )
+        
+        # 优先使用 REDIS_URL 一行配置
+        from config.cache import REDIS_URL
+        if REDIS_URL:
+            cache_client = aioredis.from_url(
+                REDIS_URL,
+                max_connections=CACHE_CONFIG["redis"]["max_connections"],
+                decode_responses=CACHE_CONFIG["redis"]["decode_responses"],
+            )
+        else:
+            # 使用独立参数构建连接
+            redis_cfg = CACHE_CONFIG["redis"]
+            cache_client = aioredis.from_url(
+                f"redis://{redis_cfg['host']}:{redis_cfg['port']}/{redis_cfg['db']}",
+                password=redis_cfg["password"],
+                max_connections=redis_cfg["max_connections"],
+                decode_responses=redis_cfg["decode_responses"],
+            )
     elif cache_type == "memory":
         # 创建内存缓存实例，使用配置中的容量和 TTL 参数
         mem_cfg = CACHE_CONFIG["memory"]

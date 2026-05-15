@@ -6,63 +6,94 @@ ThinkPython 缓存配置文件
 - Memory（内存缓存，适合开发和测试，无需额外依赖）
 - Memcached（即将支持）
 
-所有配置项均支持通过 .env 环境变量覆盖。
+配置原则：
+- 优先支持 REDIS_URL 一行配置（开发者友好）
+- 同时兼容独立参数配置（host、port、password 等）
+- 环境变量优先，未配置时使用合理默认值
 
 使用示例：
+    # 方式 1：一行 URL 配置（推荐）
+    # .env 中设置: REDIS_URL=redis://:password@localhost:6379/0
+    
+    # 方式 2：独立参数配置
+    # .env 中设置: CACHE_TYPE=redis, REDIS_HOST=localhost, REDIS_PORT=6379
+    
+    # 兼容旧的 CACHE_CONFIG 字典接口（框架内部使用）
     from config.cache import CACHE_CONFIG
-    
-    # 查看当前缓存类型
-    cache_type = CACHE_CONFIG["type"]  # "memory" 或 "redis"
-    
-    # 获取 Redis 配置
-    redis_host = CACHE_CONFIG["redis"]["host"]
+    cache_type = CACHE_CONFIG["type"]
 """
 import os
 
 
-# 缓存配置字典，集中管理所有缓存连接参数
+# ==============================
+# Redis 配置（支持 URL 或独立参数）
+# ==============================
+
+# 优先使用 REDIS_URL 一行配置（开发者友好）
+# 格式: redis://[:password]@host:port/db
+# 示例: redis://:mypassword@127.0.0.1:6379/0
+REDIS_URL = os.getenv("REDIS_URL", "")
+
+# Redis 独立参数（当 REDIS_URL 未设置时使用）
+REDIS_HOST = os.getenv("REDIS_HOST", "127.0.0.1")
+REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
+REDIS_DB = int(os.getenv("REDIS_DB", "0"))
+REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", None)
+REDIS_MAX_CONNECTIONS = int(os.getenv("REDIS_MAX_CONNECTIONS", "20"))
+REDIS_DECODE_RESPONSES = True
+REDIS_SOCKET_TIMEOUT = 5
+REDIS_SOCKET_CONNECT_TIMEOUT = 5
+
+
+# ==============================
+# 缓存全局配置
+# ==============================
+
+# 缓存类型：memory / redis / memcached
+CACHE_TYPE = os.getenv("CACHE_TYPE", "memory")
+
+# 是否启用缓存
+CACHE_ENABLED = os.getenv("CACHE_ENABLED", "True").lower() == "true"
+
+# 默认过期时间（秒）
+CACHE_DEFAULT_TTL = int(os.getenv("CACHE_DEFAULT_TTL", "3600"))
+
+# 缓存键前缀
+CACHE_PREFIX = os.getenv("CACHE_PREFIX", "thinkpython:")
+
+# 内存缓存配置
+MEMORY_CACHE_MAX_SIZE = int(os.getenv("MEMORY_CACHE_MAX_SIZE", "1000"))
+MEMORY_CACHE_TTL = int(os.getenv("MEMORY_CACHE_TTL", "300"))
+
+
+# ==============================
+# 兼容旧接口：CACHE_CONFIG 字典
+# ==============================
+# 保留 CACHE_CONFIG 字典以兼容框架内部已有的引用方式
+# 新代码推荐直接使用上面的独立常量
+
 CACHE_CONFIG = {
-    # 缓存类型，支持: redis, memory, memcached
-    # 默认使用 memory（零配置，适合开发环境）
-    # 生产环境建议使用 redis，支持持久化和分布式缓存
-    "type": os.getenv("CACHE_TYPE", "memory"),
-    
-    # 是否启用缓存，设为 False 时可完全关闭缓存功能
-    "enabled": os.getenv("CACHE_ENABLED", "True").lower() == "true",
-    
-    # Redis 配置
-    # Redis 是一个高性能的内存键值存储数据库，支持丰富的数据结构和持久化
+    "type": CACHE_TYPE,
+    "enabled": CACHE_ENABLED,
     "redis": {
-        "host": os.getenv("REDIS_HOST", "127.0.0.1"),  # Redis 服务器地址
-        "port": int(os.getenv("REDIS_PORT", "6379")),  # Redis 端口，默认 6379
-        "db": int(os.getenv("REDIS_DB", "0")),  # Redis 数据库编号（0-15），用于隔离不同业务的缓存数据
-        "password": os.getenv("REDIS_PASSWORD", None),  # Redis 认证密码，未设置密码时为 None
-        "max_connections": int(os.getenv("REDIS_MAX_CONNECTIONS", "20")),  # 连接池最大连接数
-        "decode_responses": True,  # 自动将返回的 bytes 解码为 str，方便直接使用
-        "socket_timeout": 5,  # Socket 读取超时时间（秒）
-        "socket_connect_timeout": 5,  # Socket 连接超时时间（秒）
+        "host": REDIS_HOST,
+        "port": REDIS_PORT,
+        "db": REDIS_DB,
+        "password": REDIS_PASSWORD,
+        "max_connections": REDIS_MAX_CONNECTIONS,
+        "decode_responses": REDIS_DECODE_RESPONSES,
+        "socket_timeout": REDIS_SOCKET_TIMEOUT,
+        "socket_connect_timeout": REDIS_SOCKET_CONNECT_TIMEOUT,
     },
-    
-    # Memcached 配置
-    # Memcached 是一个高性能的分布式内存对象缓存系统
     "memcached": {
-        "servers": os.getenv("MEMCACHED_SERVERS", "127.0.0.1:11211").split(","),  # Memcached 服务器列表，支持集群
-        "username": os.getenv("MEMCACHED_USERNAME", None),  # SASL 认证用户名
-        "password": os.getenv("MEMCACHED_PASSWORD", None),  # SASL 认证密码
+        "servers": os.getenv("MEMCACHED_SERVERS", "127.0.0.1:11211").split(","),
+        "username": os.getenv("MEMCACHED_USERNAME", None),
+        "password": os.getenv("MEMCACHED_PASSWORD", None),
     },
-    
-    # 内存缓存配置（适用于开发环境）
-    # 使用 Python 字典实现，无需安装额外依赖，但数据不会持久化
     "memory": {
-        "max_size": int(os.getenv("MEMORY_CACHE_MAX_SIZE", "1000")),  # 最大缓存条目数，超出时删除最旧的
-        "ttl": int(os.getenv("MEMORY_CACHE_TTL", "300")),  # 默认过期时间（秒），300秒 = 5分钟
+        "max_size": MEMORY_CACHE_MAX_SIZE,
+        "ttl": MEMORY_CACHE_TTL,
     },
-    
-    # 默认过期时间（秒），所有缓存操作不指定过期时间时使用此值
-    # 3600秒 = 1小时
-    "default_ttl": int(os.getenv("CACHE_DEFAULT_TTL", "3600")),
-    
-    # 缓存键前缀，用于区分不同应用或环境的缓存数据
-    # 例如前缀为 "thinkpython:" 时，实际存储的键为 "thinkpython:user:1"
-    "prefix": os.getenv("CACHE_PREFIX", "thinkpython:"),
+    "default_ttl": CACHE_DEFAULT_TTL,
+    "prefix": CACHE_PREFIX,
 }

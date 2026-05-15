@@ -30,7 +30,7 @@ ThinkPython 数据库连接管理
 from typing import AsyncGenerator
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import declarative_base
-from config.database import DATABASE_CONFIG, get_database_url
+from config.database import DATABASE_CONFIG, DATABASE_URL, get_database_url
 
 # 全局数据库引擎实例，负责管理连接池和执行 SQL 语句
 engine = None
@@ -50,7 +50,7 @@ async def init_database():
     仅在 DATABASE_CONFIG["enabled"] 为 True 时执行初始化。
     
     初始化过程：
-    1. 根据配置生成数据库连接 URL
+    1. 根据配置生成数据库连接 URL（支持 DATABASE_URL 一行配置）
     2. 创建异步引擎（含连接池配置）
     3. 创建异步会话工厂
     
@@ -66,19 +66,30 @@ async def init_database():
     if not DATABASE_CONFIG["enabled"]:
         return
     
-    # 从配置中获取数据库连接 URL
+    # 从配置中获取数据库连接 URL（优先使用 DATABASE_URL）
     db_url = get_database_url()
     
-    # 创建异步数据库引擎
-    # create_async_engine 是 SQLAlchemy 提供的异步版本引擎创建函数
-    engine = create_async_engine(
-        db_url,
-        pool_size=DATABASE_CONFIG["pool_size"],  # 连接池基础大小
-        max_overflow=DATABASE_CONFIG["max_overflow"],  # 连接池最大溢出连接数
-        pool_recycle=DATABASE_CONFIG["pool_recycle"],  # 连接回收时间（秒）
-        pool_pre_ping=DATABASE_CONFIG["pool_pre_ping"],  # 使用前检测连接有效性
-        echo=DATABASE_CONFIG["echo"],  # 是否打印 SQL 语句
-    )
+    # 判断是否为 SQLite，SQLite 不需要连接池配置
+    is_sqlite = "sqlite" in db_url
+    
+    if is_sqlite:
+        # SQLite 使用 NullPool（每次请求创建新连接）
+        # 因为 SQLite 是文件数据库，不需要连接池复用
+        engine = create_async_engine(
+            db_url,
+            echo=DATABASE_CONFIG["echo"],
+        )
+    else:
+        # MySQL / PostgreSQL / MSSQL 使用连接池
+        # create_async_engine 是 SQLAlchemy 提供的异步版本引擎创建函数
+        engine = create_async_engine(
+            db_url,
+            pool_size=DATABASE_CONFIG["pool_size"],  # 连接池基础大小
+            max_overflow=DATABASE_CONFIG["max_overflow"],  # 连接池最大溢出连接数
+            pool_recycle=DATABASE_CONFIG["pool_recycle"],  # 连接回收时间（秒）
+            pool_pre_ping=DATABASE_CONFIG["pool_pre_ping"],  # 使用前检测连接有效性
+            echo=DATABASE_CONFIG["echo"],  # 是否打印 SQL 语句
+        )
     
     # 创建异步会话工厂
     # async_sessionmaker 是会话的工厂类，每次调用都会创建新的 AsyncSession

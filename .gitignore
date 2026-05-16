@@ -55,6 +55,9 @@ pip-delete-this-directory.txt
 .env
 !.env.example
 
+# 本地测试资料
+本地测试资料.txt
+
 # Database
 *.db
 *.sqlite3

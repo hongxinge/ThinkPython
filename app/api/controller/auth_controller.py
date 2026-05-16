@@ -141,6 +141,7 @@ class AuthController(BaseAuthController):
             )
         
         @self.router.post("/auth/register", summary="用户注册", response_model=dict)
+        @skip_auth
         async def register(
             data: RegisterRequest,
             db: AsyncSession = Depends(get_db),

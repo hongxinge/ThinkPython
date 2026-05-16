@@ -143,7 +143,10 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
         Exception: 当数据库连接未初始化时抛出
     """
     if async_session is None:
-        raise Exception("数据库连接未初始化，请检查数据库配置")
+        # 如果尚未初始化，尝试自动初始化（支持测试环境和独立调用）
+        await init_database()
+        if async_session is None:
+            raise Exception("数据库连接未初始化，请检查数据库配置")
     
     # 从会话工厂创建一个新会话
     async with async_session() as session:

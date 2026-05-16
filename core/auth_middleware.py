@@ -88,6 +88,11 @@ def _is_skip_auth_route(method: str, path: str, route_obj) -> bool:
 def _is_in_controller_whitelist(method: str, path: str, route_obj) -> bool:
     """检查路由是否在控制器的白名单中
     
+    支持三种匹配方式：
+    1. 精确匹配：白名单 "POST /auth/login" 匹配实际路由 "POST /api/auth/login"
+    2. 相对路径匹配：白名单中的路径是路由路径的一部分即可匹配
+    3. 通配符匹配："GET /api/*" 匹配所有 /api 下的路径
+    
     Args:
         method: HTTP 请求方法
         path: 请求路径
@@ -116,10 +121,21 @@ def _is_in_controller_whitelist(method: str, path: str, route_obj) -> bool:
                     route_pattern = f"{method.upper()} {path}"
                     for skip_pattern in skip_routes:
                         skip_pattern = skip_pattern.strip()
-                        # 精确匹配
-                        if skip_pattern.upper() == route_pattern.upper():
+                        skip_upper = skip_pattern.upper()
+                        
+                        # 1. 精确匹配
+                        if skip_upper == route_pattern.upper():
                             return True
-                        # 通配符匹配（如 "GET /api/*"）
+                        
+                        # 2. 路径包含匹配（如白名单 "POST /auth/login" 应匹配 "POST /api/auth/login"）
+                        # 提取白名单中的路径部分
+                        if " " in skip_pattern:
+                            _, skip_path = skip_pattern.split(" ", 1)
+                            # 如果实际路由路径包含白名单中的路径，则认为匹配
+                            if path.endswith(skip_path):
+                                return True
+                        
+                        # 3. 通配符匹配（如 "GET /api/*"）
                         if skip_pattern.endswith("*"):
                             prefix = skip_pattern[:-1].strip().upper()
                             if route_pattern.upper().startswith(prefix):
@@ -264,16 +280,25 @@ def _paths_match(request_path: str, route_path: str) -> bool:
     支持：
     - 精确匹配：/auth/login == /auth/login
     - 路径参数：/user/123 匹配 /user/{user_id}
+    - 模块前缀匹配：/api/auth/login 匹配 /auth/login（多模块模式）
     
     Args:
-        request_path: 实际请求路径
-        route_path: 路由定义路径
+        request_path: 实际请求路径（如 /api/auth/login）
+        route_path: 路由定义路径（如 /auth/login）
         
     Returns:
         bool: 是否匹配
     """
     # 精确匹配
     if request_path == route_path:
+        return True
+    
+    # 路由路径是请求路径的后缀（多模块模式，如 /api/auth/login 匹配 /auth/login）
+    if request_path.endswith(route_path):
+        return True
+    
+    # 请求路径是路由路径的后缀（反向情况较少见，但为了完整性也支持）
+    if route_path.endswith(request_path):
         return True
     
     # 路径参数匹配

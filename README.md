@@ -16,7 +16,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/Python-3.8%2B-blue" alt="Python 3.8+">
-  <img src="https://img.shields.io/badge/FastAPI-0.104%2B-green" alt="FastAPI 0.104+">
+  <img src="https://img.shields.io/badge/FastAPI-0.115%2B-green" alt="FastAPI 0.115+">
   <img src="https://img.shields.io/badge/License-MIT-orange" alt="MIT License">
 </p>
 
@@ -266,6 +266,13 @@ ThinkPython 采用 [MIT License](LICENSE) 开源协议，完全免费，可商�
 3. 提交改动 (`git commit -m 'Add your feature'`)
 4. 推送分支 (`git push origin feature/your-feature`)
 5. 提交 Pull Request
+
+提交前请运行测试套件，确保全部通过：
+
+```bash
+pip install -r requirements.txt pytest pytest-asyncio
+pytest tests/ -q
+```
 
 ---
 

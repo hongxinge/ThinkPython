@@ -134,8 +134,11 @@ class BaseService:
             user = await self.create({"username": "张三", "email": "zhangsan@example.com"})
             print(user.id)  # 自动生成的主键 ID
         """
+        # 过滤掉模型中不存在的字段，防止传入非法字段导致构造异常
+        valid_fields = set(self.model_class.__table__.columns.keys())
+        filtered_data = {k: v for k, v in data.items() if k in valid_fields}
         # 使用字典解包创建模型实例
-        instance = self.model_class(**data)
+        instance = self.model_class(**filtered_data)
         self.db.add(instance)
         # flush() 将变更同步到数据库但不提交，用于获取自增 ID
         await self.db.flush()
@@ -161,9 +164,13 @@ class BaseService:
         # 先查找记录是否存在
         instance = await self.get_by_id(id)
         if instance:
-            # 使用 setattr 动态设置字段值
+            # 批量赋值防护：只允许更新模型真实字段，且禁止覆盖受保护字段
+            # （防止用户可控数据篡改 id/created_at 等不可变字段）
+            valid_fields = set(self.model_class.__table__.columns.keys())
+            protected_fields = {"id", "created_at", "updated_at"}
             for key, value in data.items():
-                setattr(instance, key, value)
+                if key in valid_fields and key not in protected_fields:
+                    setattr(instance, key, value)
             await self.db.flush()
             await self.db.refresh(instance)
         return instance

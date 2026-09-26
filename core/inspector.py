@@ -291,10 +291,11 @@ class DatabaseInspector:
         """
         if "mysql" in self.db_url.lower():
             async with self.engine.connect() as conn:
+                # 使用绑定参数查询，避免 SQL 拼接
                 result = await conn.execute(text(
-                    f"SELECT TABLE_COMMENT FROM information_schema.TABLES "
-                    f"WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '{table_name}'"
-                ))
+                    "SELECT TABLE_COMMENT FROM information_schema.TABLES "
+                    "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = :table_name"
+                ), {"table_name": table_name})
                 row = result.fetchone()
                 if row and row[0]:
                     return row[0]
@@ -312,10 +313,11 @@ class DatabaseInspector:
         comments = {}
         if "mysql" in self.db_url.lower():
             async with self.engine.connect() as conn:
+                # 使用绑定参数查询，避免 SQL 拼接
                 result = await conn.execute(text(
-                    f"SELECT COLUMN_NAME, COLUMN_COMMENT FROM information_schema.COLUMNS "
-                    f"WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '{table_name}'"
-                ))
+                    "SELECT COLUMN_NAME, COLUMN_COMMENT FROM information_schema.COLUMNS "
+                    "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = :table_name"
+                ), {"table_name": table_name})
                 for row in result.fetchall():
                     if row[1]:
                         comments[row[0]] = row[1]

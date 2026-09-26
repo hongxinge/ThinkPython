@@ -32,8 +32,9 @@ from fastapi.responses import JSONResponse
 from typing import Callable
 from functools import wraps
 
-from helpers.auth import decode_token, get_token_from_header, CurrentUser
+from helpers.auth import decode_token, get_token_from_header, CurrentUser, is_token_blacklisted
 from config.auth import SKIP_AUTH_PATHS, AUTH_ENABLED
+from router import iter_flat_routes
 
 
 def skip_auth(func: Callable) -> Callable:
@@ -131,8 +132,8 @@ def _is_in_controller_whitelist(method: str, path: str, route_obj) -> bool:
                         # 提取白名单中的路径部分
                         if " " in skip_pattern:
                             _, skip_path = skip_pattern.split(" ", 1)
-                            # 如果实际路由路径包含白名单中的路径，则认为匹配
-                            if path.endswith(skip_path):
+                            # 实际路由路径等于白名单路径，或白名单路径是其段边界后缀时匹配
+                            if path == skip_path or _suffix_match(path, skip_path):
                                 return True
                         
                         # 3. 通配符匹配（如 "GET /api/*"）
@@ -190,35 +191,43 @@ async def auth_middleware(request: Request, call_next):
     
     path = request.url.path
     method = request.method
-    
+
+    # 预检请求（OPTIONS）直接放行：
+    # 浏览器跨域预检请求不会携带 Token，由外层的 CORS 中间件直接响应
+    if method == "OPTIONS":
+        return await call_next(request)
+
     # 1. 检查全局白名单
     if _is_in_global_whitelist(path):
         return await call_next(request)
     
     # 2. 检查控制器白名单和装饰器标记
-    # 遍历所有路由，查找匹配的路由对象
-    for route in request.app.routes:
+    # 遍历所有路由（展平嵌套路由，兼容 FastAPI 0.141+），查找匹配的路由对象
+    for route, route_prefix in iter_flat_routes(request.app.routes):
         try:
             # 检查路由是否匹配当前请求
             if not hasattr(route, "methods"):
                 continue
             if method not in route.methods:
                 continue
-            
+
             route_path = getattr(route, "path", None)
             if not route_path:
                 continue
-            
+
+            # 拼接模块前缀得到完整访问路径（如 /api + /auth/login）
+            full_path = f"{route_prefix}{route_path}" if route_prefix else route_path
+
             # 简化路径匹配
-            if not _paths_match(path, route_path):
+            if not _paths_match(path, full_path):
                 continue
-            
+
             # 检查装饰器标记
-            if _is_skip_auth_route(method, route_path, route):
+            if _is_skip_auth_route(method, full_path, route):
                 return await call_next(request)
-            
+
             # 检查控制器白名单
-            if _is_in_controller_whitelist(method, route_path, route):
+            if _is_in_controller_whitelist(method, full_path, route):
                 return await call_next(request)
         except (AttributeError, TypeError, ValueError):
             # 跳过无法解析的路由（如静态文件路由）
@@ -262,7 +271,19 @@ async def auth_middleware(request: Request, call_next):
             },
             headers={"WWW-Authenticate": "Bearer"},
         )
-    
+
+    # 检查 Token 是否在黑名单中（需启用 TOKEN_BLACKLIST_ENABLED，支持 Redis/Memory 缓存）
+    if await is_token_blacklisted(token):
+        return JSONResponse(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            content={
+                "code": 401,
+                "message": "Token 已失效，请重新登录",
+                "data": None,
+            },
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
     # Token 验证通过，注入用户信息到请求上下文
     request.state.current_user = CurrentUser(
         user_id=payload.get("user_id", 0),
@@ -274,40 +295,60 @@ async def auth_middleware(request: Request, call_next):
     return await call_next(request)
 
 
+def _suffix_match(longer: str, shorter: str) -> bool:
+    """判断 longer 是否以 shorter 为路径段后缀
+
+    要求 shorter 以 / 开头，从而保证后缀天然位于路径段边界
+    （如 /api/auth/login 匹配 /auth/login，而 /xuser/list 不会误匹配 /user/list）。
+
+    Args:
+        longer: 较长的路径（如 /api/auth/login）
+        shorter: 较短的路径（如 /auth/login）
+
+    Returns:
+        bool: 是否为边界安全的后缀匹配
+    """
+    return (
+        len(longer) > len(shorter)
+        and shorter.startswith("/")
+        and longer.endswith(shorter)
+    )
+
+
 def _paths_match(request_path: str, route_path: str) -> bool:
     """判断请求路径是否匹配路由路径
-    
+
     支持：
     - 精确匹配：/auth/login == /auth/login
     - 路径参数：/user/123 匹配 /user/{user_id}
-    - 模块前缀匹配：/api/auth/login 匹配 /auth/login（多模块模式）
-    
+    - 模块前缀匹配：/api/auth/login 匹配 /auth/login（多模块模式，要求段边界）
+
     Args:
         request_path: 实际请求路径（如 /api/auth/login）
         route_path: 路由定义路径（如 /auth/login）
-        
+
     Returns:
         bool: 是否匹配
     """
     # 精确匹配
     if request_path == route_path:
         return True
-    
+
     # 路由路径是请求路径的后缀（多模块模式，如 /api/auth/login 匹配 /auth/login）
-    if request_path.endswith(route_path):
+    if _suffix_match(request_path, route_path):
         return True
-    
+
     # 请求路径是路由路径的后缀（反向情况较少见，但为了完整性也支持）
-    if route_path.endswith(request_path):
+    if _suffix_match(route_path, request_path):
         return True
-    
+
     # 路径参数匹配
     request_parts = request_path.strip("/").split("/")
     route_parts = route_path.strip("/").split("/")
-    
+
     if len(request_parts) != len(route_parts):
         return False
-    
+
     for req_part, route_part in zip(request_parts, route_parts):
         # 路由参数（如 {user_id}）匹配任何值
         if route_part.startswith("{") and route_part.endswith("}"):
@@ -315,5 +356,5 @@ def _paths_match(request_path: str, route_path: str) -> bool:
         # 普通路径段必须精确匹配
         if req_part != route_part:
             return False
-    
+
     return True

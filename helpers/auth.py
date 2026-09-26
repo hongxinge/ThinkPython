@@ -5,9 +5,9 @@ ThinkPython JWT 认证工具
 - create_token(): 创建 Access Token
 - create_refresh_token(): 创建 Refresh Token
 - decode_token(): 解析并验证 JWT Token
-- refresh_access_token(): 使用 Refresh Token 刷新 Access Token
-- blacklist_token(): 将 Token 加入黑名单（注销）
-- is_token_blacklisted(): 检查 Token 是否在黑名单中
+- refresh_access_token(): 使用 Refresh Token 刷新 Access Token（异步，需 await）
+- blacklist_token(): 将 Token 加入黑名单（注销，异步，需 await）
+- is_token_blacklisted(): 检查 Token 是否在黑名单中（异步，需 await）
 - get_token_from_header(): 从 HTTP 请求头中提取 Token
 - skip_auth: 装饰器，标记单个接口免验证
 - require_auth: FastAPI 依赖注入，自动验证 Token 并返回当前用户信息
@@ -50,7 +50,7 @@ ThinkPython JWT 认证工具
     }
     
     # 刷新 Access Token
-    new_token_pair = refresh_access_token(refresh_token="...")
+    new_token_pair = await refresh_access_token(refresh_token="...")
 """
 import os
 import jwt
@@ -133,16 +133,21 @@ def _generate_token_jti(user_id: int, token_type: str) -> str:
     return hashlib.sha256(raw.encode()).hexdigest()[:32]
 
 
-def _is_token_blacklisted(token: str) -> bool:
-    """检查 Token 是否在黑名单中
+async def is_token_blacklisted(token: str) -> bool:
+    """检查 Token 是否在黑名单中（异步）
     
-    内部函数，检查 Token 的 JTI 是否已被加入黑名单。
+    解析 Token 获取 JTI，然后查询缓存（Redis/Memory）判断是否已被加入黑名单。
+    必须在异步环境中通过 await 调用。
     
     Args:
         token: JWT Token 字符串
         
     Returns:
         bool: 在黑名单中返回 True，否则返回 False
+        
+    使用示例:
+        if await is_token_blacklisted(token):
+            raise UnauthorizedException("Token 已失效")
     """
     if not TOKEN_BLACKLIST_ENABLED:
         return False
@@ -156,25 +161,8 @@ def _is_token_blacklisted(token: str) -> bool:
         
         # 从缓存中检查是否在黑名单中
         from core.cache import get_cache
-        import asyncio
-        
-        try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                # 在异步环境中
-                return asyncio.get_event_loop().create_task(
-                    get_cache(f"{TOKEN_BLACKLIST_PREFIX}{jti}")
-                ) is not None
-            else:
-                # 在同步环境中
-                import asyncio
-                try:
-                    result = asyncio.run(get_cache(f"{TOKEN_BLACKLIST_PREFIX}{jti}"))
-                    return result is not None
-                except RuntimeError:
-                    return False
-        except Exception:
-            return False
+        result = await get_cache(f"{TOKEN_BLACKLIST_PREFIX}{jti}")
+        return result is not None
     except Exception:
         return False
 
@@ -269,8 +257,8 @@ def create_refresh_token(user_id: int, extra_data: Optional[Dict] = None) -> str
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
 
 
-def refresh_access_token(refresh_token: str) -> Dict[str, Any]:
-    """使用 Refresh Token 刷新 Access Token
+async def refresh_access_token(refresh_token: str) -> Dict[str, Any]:
+    """使用 Refresh Token 刷新 Access Token（异步）
     
     验证 Refresh Token 的有效性，如果有效则生成新的 Access Token（和可选的新 Refresh Token）。
     如果启用了 Refresh Token 轮换机制，旧的 Refresh Token 将立即失效。
@@ -292,7 +280,7 @@ def refresh_access_token(refresh_token: str) -> Dict[str, Any]:
         
     使用示例:
         try:
-            new_tokens = refresh_access_token(old_refresh_token)
+            new_tokens = await refresh_access_token(old_refresh_token)
             # 返回给前端，前端保存新的 Token 对
         except ValueError as e:
             # 需要重新登录
@@ -308,7 +296,7 @@ def refresh_access_token(refresh_token: str) -> Dict[str, Any]:
         raise ValueError("无效的 Token 类型，需要 Refresh Token")
     
     # 检查是否在黑名单中
-    if _is_token_blacklisted(refresh_token):
+    if await is_token_blacklisted(refresh_token):
         raise ValueError("Refresh Token 已失效")
     
     user_id = payload.get("user_id")
@@ -323,7 +311,7 @@ def refresh_access_token(refresh_token: str) -> Dict[str, Any]:
     if JWT_REFRESH_TOKEN_ROTATE:
         # 将旧的 Refresh Token 加入黑名单
         if TOKEN_BLACKLIST_ENABLED:
-            blacklist_token(refresh_token)
+            await blacklist_token(refresh_token)
         # 生成新的 Refresh Token
         new_refresh_token = create_refresh_token(user_id)
     else:
@@ -338,10 +326,10 @@ def refresh_access_token(refresh_token: str) -> Dict[str, Any]:
     }
 
 
-def blacklist_token(token: str, expire_seconds: Optional[int] = None) -> None:
-    """将 Token 加入黑名单（用于主动注销）
+async def blacklist_token(token: str, expire_seconds: Optional[int] = None) -> None:
+    """将 Token 加入黑名单（用于主动注销，异步）
     
-    用户登出时调用，将 Token 的 JTI 加入 Redis 黑名单，
+    用户登出时调用，将 Token 的 JTI 加入缓存黑名单（Redis/Memory），
     在 Token 自然过期前都无法再次使用。
     
     Args:
@@ -354,7 +342,7 @@ def blacklist_token(token: str, expire_seconds: Optional[int] = None) -> None:
         async def logout(authorization: str = Header(None)):
             token = get_token_from_header(authorization)
             if token:
-                blacklist_token(token)
+                await blacklist_token(token)
             return {"message": "已退出登录"}
     """
     if not TOKEN_BLACKLIST_ENABLED:
@@ -379,19 +367,11 @@ def blacklist_token(token: str, expire_seconds: Optional[int] = None) -> None:
         if expire_seconds <= 0:
             return  # Token 已过期，无需加入黑名单
         
-        # 将 JTI 加入 Redis 黑名单
+        # 将 JTI 加入缓存黑名单
         from core.cache import set_cache
-        import asyncio
         
         key = f"{TOKEN_BLACKLIST_PREFIX}{jti}"
-        try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                asyncio.ensure_future(set_cache(key, "1", expire=expire_seconds))
-            else:
-                asyncio.run(set_cache(key, "1", expire=expire_seconds))
-        except RuntimeError:
-            pass  # 忽略异步环境错误
+        await set_cache(key, "1", ttl=expire_seconds)
     except Exception:
         pass  # 忽略黑名单添加失败
 
@@ -420,27 +400,6 @@ def decode_token(token: str, verify_exp: bool = True) -> Optional[Dict[str, Any]
     try:
         # decode() 会自动验证签名和过期时间
         payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM], options={"verify_exp": verify_exp})
-        
-        # 检查是否在黑名单中
-        if TOKEN_BLACKLIST_ENABLED and verify_exp:
-            jti = payload.get("jti")
-            if jti:
-                # 同步检查（简化版，实际应在中间件中异步检查）
-                from core.cache import cache_client
-                if hasattr(cache_client, 'client') and cache_client.client:
-                    try:
-                        import asyncio
-                        loop = asyncio.get_event_loop()
-                        if loop.is_running():
-                            # 在异步环境中，这里只能做粗略检查
-                            pass
-                        else:
-                            result = asyncio.run(cache_client.get(f"{TOKEN_BLACKLIST_PREFIX}{jti}"))
-                            if result:
-                                return None  # Token 在黑名单中
-                    except Exception:
-                        pass
-        
         return payload
     except jwt.ExpiredSignatureError:
         # Token 已过期
@@ -590,6 +549,14 @@ async def require_auth(
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Token 无效或已过期，请重新登录",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    # 检查 Token 是否在黑名单中（需启用 TOKEN_BLACKLIST_ENABLED）
+    if TOKEN_BLACKLIST_ENABLED and await is_token_blacklisted(token):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token 已失效，请重新登录",
             headers={"WWW-Authenticate": "Bearer"},
         )
     

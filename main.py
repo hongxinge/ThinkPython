@@ -130,12 +130,17 @@ def create_app() -> FastAPI:
     )
     
     # ===== 配置中间件 =====
-    setup_cors(app)  # 添加 CORS 跨域中间件
-    app.middleware("http")(request_log_middleware)  # 添加请求日志中间件
-    setup_rate_limit(app)  # 添加 API 限流中间件
-    
-    # 注册全局认证中间件
-    app.middleware("http")(auth_middleware)
+    # 注意：FastAPI/Starlette 中间件的执行顺序与注册顺序相反（后注册的在最外层、最先执行）。
+    # 期望的执行顺序（从外到内）：请求日志 -> CORS -> 限流 -> 认证 -> 路由
+    # 这样设计可确保：
+    #   1. CORS 在认证之外：浏览器跨域预检请求(OPTIONS)不会被认证拦截，
+    #      401/429 等错误响应也会携带 CORS 头，前端能正常读取错误信息
+    #   2. 限流在认证之外：登录等免认证接口同样受到限流保护（防暴力破解）
+    #   3. 请求日志在最外层：所有请求（含被中间件拦截的请求）都会被记录
+    app.middleware("http")(auth_middleware)  # 全局认证中间件（最内层）
+    setup_rate_limit(app)  # API 限流中间件
+    setup_cors(app)  # CORS 跨域中间件
+    app.middleware("http")(request_log_middleware)  # 请求日志中间件（最外层）
     
     # ===== 注册异常处理器 =====
     # 处理自定义应用异常（AppException 及其子类）

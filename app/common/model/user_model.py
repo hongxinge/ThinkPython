@@ -28,6 +28,7 @@ ThinkPython 公共用户模型
     - password: 密码（哈希存储）
     - email: 邮箱
     - mobile: 手机号
+    - nickname: 用户昵称
     - avatar: 头像URL
     - status: 状态（0=禁用，1=启用）
     - created_at: 创建时间（继承自BaseModel）
@@ -48,6 +49,7 @@ class User(BaseModel):
         password: 密码（应存储哈希值，不存储明文）
         email: 邮箱地址，唯一，最长100字符
         mobile: 手机号，最长20字符
+        nickname: 用户昵称，最长50字符
         avatar: 用户头像URL地址，最长255字符
         status: 用户状态，0表示禁用，1表示启用
     """
@@ -85,7 +87,15 @@ class User(BaseModel):
         nullable=True,
         comment="手机号",
     )
-    
+
+    # 用户昵称
+    nickname = Column(
+        String(50),
+        nullable=True,
+        default=None,
+        comment="用户昵称",
+    )
+
     # 头像URL
     avatar = Column(
         String(255),

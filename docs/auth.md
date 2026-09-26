@@ -167,6 +167,39 @@ curl -X POST http://localhost:8000/api/auth/change-password \
   -d '{"old_password": "123456", "new_password": "654321"}'
 ```
 
+## 双 Token 刷新（后端用法）
+
+ThinkPython 内置双 Token 机制（Access Token 短期有效 + Refresh Token 长期有效）。
+在控制器中调用 `helpers/auth.py` 提供的异步函数即可实现 Token 刷新和登出：
+
+```python
+from helpers.auth import create_refresh_token, refresh_access_token, blacklist_token
+
+@self.router.post("/auth/refresh")
+async def refresh(refresh_token: str):
+    """用 Refresh Token 换取新的 Access Token"""
+    try:
+        # 注意：refresh_access_token 是异步函数，必须 await
+        result = await refresh_access_token(refresh_token)
+        return self.success(data=result, message="刷新成功")
+    except ValueError as e:
+        # Refresh Token 无效/过期/已轮换，需要重新登录
+        return self.error(message=str(e), code=401)
+
+@self.router.post("/auth/logout")
+async def logout(request: Request):
+    """登出：将当前 Token 加入黑名单（需开启 TOKEN_BLACKLIST_ENABLED）"""
+    authorization = request.headers.get("Authorization", "")
+    token = authorization.replace("Bearer ", "") if authorization else None
+    if token:
+        # 注意：blacklist_token 是异步函数，必须 await
+        await blacklist_token(token)
+    return self.success(message="已退出登录")
+```
+
+> 💡 默认配置下 Access Token 2 小时过期、Refresh Token 7 天过期，且开启轮换
+> （每次刷新会签发新的 Refresh Token，旧 Token 立即作废，防止 Token 泄露被长期利用）。
+
 ## 认证流程图
 
 ```
@@ -197,8 +230,10 @@ curl -X POST http://localhost:8000/api/auth/change-password \
 | `AUTH_ENABLED` | 是否启用认证中间件 | `true` |
 | `JWT_SECRET` | JWT 签名密钥 | `your-secret-key...` |
 | `JWT_ALGORITHM` | 签名算法 | `HS256` |
-| `JWT_EXPIRE_HOURS` | Token 过期时间（小时） | `24` |
-| `JWT_REFRESH_HOURS` | Token 刷新窗口期（小时） | `2` |
+| `JWT_ACCESS_TOKEN_EXPIRE_HOURS` | Access Token 过期时间（小时） | `2` |
+| `JWT_REFRESH_TOKEN_EXPIRE_DAYS` | Refresh Token 过期时间（天） | `7` |
+| `JWT_REFRESH_TOKEN_ROTATE` | Refresh Token 轮换机制（刷新时旧 Token 失效） | `true` |
+| `TOKEN_BLACKLIST_ENABLED` | Token 黑名单（登出后立即失效，需 Redis/缓存支持） | `false` |
 | `LOGIN_MAX_ATTEMPTS` | 登录失败最大尝试次数 | `5` |
 | `LOGIN_LOCK_DURATION` | 账号锁定时长（分钟） | `30` |
 

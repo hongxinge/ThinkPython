@@ -166,8 +166,11 @@ class MemoryCache:
         Returns:
             bool: 始终返回 True 表示设置成功
         """
+        # key 已存在时先删除再写入，刷新其插入顺序（近似 LRU，防止热点键被误淘汰）
+        if key in self._cache:
+            del self._cache[key]
         # 如果缓存已满，删除最旧的一个条目（按字典插入顺序）
-        if len(self._cache) >= self._max_size:
+        elif len(self._cache) >= self._max_size:
             oldest_key = next(iter(self._cache))
             del self._cache[oldest_key]
         

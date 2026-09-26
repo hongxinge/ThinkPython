@@ -698,28 +698,29 @@ class {controller_name}(BaseController):
 """
 from typing import Optional, Dict, Any, List
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, func
 from core.base_service import BaseService
 from app.{module}.model.{table_info.name.lower()}_model import {model_name}
 
 
 class {service_name}(BaseService):
     """{class_name}服务"""
-    
+
     def __init__(self, db: AsyncSession):
         super().__init__(db)
         self.model_class = {model_name}
-    
+
     async def get_list(self, page: int = 1, page_size: int = 10) -> tuple:
         """获取{class_name}列表"""
         offset = (page - 1) * page_size
         stmt = select(self.model_class).offset(offset).limit(page_size).order_by(self.model_class.id.desc())
         result = await self.db.execute(stmt)
         items = result.scalars().all()
-        
-        count_stmt = select(self.model_class)
+
+        # 使用 COUNT 聚合查询统计总数，避免全表加载
+        count_stmt = select(func.count()).select_from(self.model_class)
         count_result = await self.db.execute(count_stmt)
-        total = len(count_result.scalars().all())
+        total = count_result.scalar() or 0
         
         return [{k: v for k, v in item.__dict__.items() if not k.startswith('_') and k != 'id'} for item in items], total
     
@@ -904,10 +905,22 @@ class DBMigrateCommand(Command):
     def _run_simple_migration(self):
         """简单模式：使用 create_all 创建表"""
         import asyncio
-        from core.database import init_database, Base, engine
+        import core.database as db_module
+        from core.database import Base
         
         async def run_migration():
-            await init_database()
+            await db_module.init_database()
+            # 注意：必须通过模块属性访问 engine。
+            # engine 在 init_database() 中通过 global 重新赋值，
+            # 若使用 "from core.database import engine" 会拿到导入时的 None。
+            engine = db_module.engine
+            if engine is None:
+                print("⚠️ 数据库未启用（DB_ENABLED=false），跳过迁移")
+                return
+            # 导入应用入口以触发所有模型的注册：
+            # Base.metadata 只包含已导入的模型类，CLI 进程默认不导入任何模型，
+            # 不导入 main 的话 create_all 会创建 0 张表（空迁移）。
+            from main import app  # noqa: F401
             async with engine.begin() as conn:
                 await conn.run_sync(Base.metadata.create_all)
             print("✅ 数据库迁移完成（简单模式：已创建所有模型对应的表）")
@@ -996,29 +1009,31 @@ class ListRoutesCommand(Command):
     
     def handle(self, args: argparse.Namespace) -> None:
         """执行列出路由命令
-        
+
         Args:
             args: 命令行参数对象（此命令无需额外参数）
         """
         from main import app
-        
+        from router import iter_flat_routes
+
         print(f"\n{'方法':<10} {'路径':<40} {'描述':<30}")
         print("-" * 80)
-        
-        for route in app.routes:
+
+        route_count = 0
+        # 展平嵌套路由（兼容 FastAPI 0.141+ 的 _IncludedRouter 结构）
+        for route, prefix in iter_flat_routes(app.routes):
             if hasattr(route, "methods"):
                 # 排除 HEAD 和 OPTIONS（FastAPI 自动生成的选项请求）
                 methods = ", ".join(route.methods - {"HEAD", "OPTIONS"})
-                path = route.path
-                name = getattr(route, "name", "")
+                path = f"{prefix}{route.path}" if prefix else route.path
                 summary = ""
                 # 如果路由有 summary 属性（从 docstring 生成），则显示
                 if hasattr(route, "summary") and route.summary:
                     summary = route.summary
                 print(f"{methods:<10} {path:<40} {summary:<30}")
-        
-        # 统计路由总数（排除 HEAD/OPTIONS）
-        print(f"\n共 {len([r for r in app.routes if hasattr(r, 'methods')])} 个路由\n")
+                route_count += 1
+
+        print(f"\n共 {route_count} 个路由\n")
 
 
 def create_parser() -> argparse.ArgumentParser:

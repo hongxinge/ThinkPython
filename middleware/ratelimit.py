@@ -281,17 +281,21 @@ class RateLimitMiddleware:
         """初始化限流器"""
         if RATE_LIMIT_BACKEND == "redis":
             try:
-                from core.cache import cache_client
-                if hasattr(cache_client, 'client') and cache_client.client:
+                # 通过模块属性访问，确保拿到的是最新的缓存客户端实例
+                from core import cache as cache_module
+                from config.cache import CACHE_CONFIG
+                client = cache_module.cache_client
+                # 仅当缓存类型为 Redis 且客户端已初始化时，才使用 Redis 限流
+                if CACHE_CONFIG["type"] == "redis" and client is not None:
                     self.limiter = RedisRateLimiter(
-                        cache_client.client,
+                        client,
                         prefix=RATE_LIMIT_REDIS_PREFIX
                     )
                     logger.info("限流后端: Redis")
                     return
             except Exception as e:
                 logger.warning(f"Redis 限流器初始化失败，降级到内存模式: {e}")
-        
+
         # 默认使用内存限流器
         self.limiter = MemoryRateLimiter()
         logger.info("限流后端: Memory")

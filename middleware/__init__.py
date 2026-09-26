@@ -43,6 +43,15 @@ def setup_cors(app):
         setup_cors(app)  # 启用跨域支持
     """
     cors_config = APP_CONFIG["cors"]
+
+    # 安全提醒：allow_origins 含 "*" 且允许携带凭证的组合，浏览器会拒绝生效且存在安全风险
+    if "*" in cors_config["allow_origins"] and cors_config["allow_credentials"]:
+        logger.warning(
+            "CORS 配置了 allow_origins=['*'] 且 allow_credentials=True，"
+            "该组合违反 CORS 规范（浏览器会拒绝携带凭证的跨域请求）。"
+            "生产环境请在 .env 中通过 CORS_ORIGINS 指定明确的域名列表"
+        )
+
     app.add_middleware(
         CORSMiddleware,
         allow_origins=cors_config["allow_origins"],  # 允许的来源域名

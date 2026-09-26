@@ -37,6 +37,33 @@ from config.app import APP_CONFIG
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 
+def iter_flat_routes(routes, prefix: str = ""):
+    """递归展平路由列表（兼容 FastAPI 新旧版本的嵌套路由结构）
+
+    FastAPI 0.141 起，include_router 不再把子路由复制进父路由，而是包装为
+    _IncludedRouter（真实路由保存在 original_router 中，URL 前缀记录在
+    include_context 中）。旧版本（0.115 ~ 0.140）的路由本身就是扁平的，
+    本函数同样兼容。
+
+    Args:
+        routes: 路由列表（如 app.routes）
+        prefix: 递归过程中累积的 URL 前缀（外部调用无需传参）
+
+    Yields:
+        Tuple[BaseRoute, str]: (路由对象, 累积前缀)，
+        路由的完整访问路径为 prefix + route.path
+    """
+    for route in routes:
+        # 新版 FastAPI 的嵌套路由：递归展平并累积前缀
+        original = getattr(route, "original_router", None)
+        if original is not None:
+            ctx = getattr(route, "include_context", None)
+            sub_prefix = getattr(ctx, "prefix", "") or ""
+            yield from iter_flat_routes(original.routes, prefix + sub_prefix)
+        else:
+            yield route, prefix
+
+
 def get_router_by_mode() -> APIRouter:
     """根据配置获取主路由器（支持单/多模块模式切换）
     

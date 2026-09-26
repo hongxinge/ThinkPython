@@ -4,6 +4,7 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pytest
+import pytest_asyncio
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -84,8 +85,10 @@ class TestDatabaseConfig:
 
 class TestDatabaseConnection:
 
-    @pytest.fixture
-    def db_engine_and_session(self):
+    @pytest_asyncio.fixture
+    async def db_engine_and_session(self):
+        # 使用 pytest_asyncio 异步 fixture（原写法 asyncio.get_event_loop()
+        # 在 Python 3.12+ 中会抛 RuntimeError）
         engine = create_async_engine(
             "sqlite+aiosqlite:///:memory:",
             connect_args={"check_same_thread": False},
@@ -93,27 +96,18 @@ class TestDatabaseConnection:
         )
         async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
-        import asyncio
-        async def setup():
-            async with engine.begin() as conn:
-                await conn.run_sync(Base.metadata.create_all)
+        # 创建所有表
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
 
-        async def teardown():
-            async with engine.begin() as conn:
-                await conn.run_sync(Base.metadata.drop_all)
-            await engine.dispose()
+        session = async_session()
+        yield session, engine
 
-        async def run_setup_and_return_session():
-            await setup()
-            session = async_session()
-            return session, engine
-
-        session, eng = asyncio.get_event_loop().run_until_complete(run_setup_and_return_session())
-        yield session, eng
-        async def cleanup():
-            await session.close()
-            await teardown()
-        asyncio.get_event_loop().run_until_complete(cleanup())
+        # 清理：关闭会话、删除所有表、释放引擎
+        await session.close()
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.drop_all)
+        await engine.dispose()
 
     @pytest.mark.asyncio
     async def test_create_model(self, db_engine_and_session):

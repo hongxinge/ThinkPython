@@ -1,6 +1,7 @@
 """ThinkPython 框架核心功能测试"""
 import sys
 import os
+import asyncio
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pytest
@@ -404,10 +405,10 @@ class TestTokenRefresh:
         assert "jti" in payload
 
     def test_refresh_access_token(self):
-        """测试刷新 Access Token"""
+        """测试刷新 Access Token（异步函数，使用 asyncio.run 调用）"""
         from helpers.auth import create_refresh_token, refresh_access_token
         refresh_token = create_refresh_token(user_id=1)
-        result = refresh_access_token(refresh_token)
+        result = asyncio.run(refresh_access_token(refresh_token))
         assert "access_token" in result
         assert "refresh_token" in result
         assert result["token_type"] == "bearer"
@@ -417,7 +418,7 @@ class TestTokenRefresh:
         """测试无效 Refresh Token"""
         from helpers.auth import refresh_access_token
         try:
-            refresh_access_token("invalid.token.here")
+            asyncio.run(refresh_access_token("invalid.token.here"))
             assert False, "应该抛出 ValueError"
         except ValueError:
             pass
@@ -427,7 +428,7 @@ class TestTokenRefresh:
         from helpers.auth import create_token, refresh_access_token
         access_token = create_token(user_id=1)
         try:
-            refresh_access_token(access_token)
+            asyncio.run(refresh_access_token(access_token))
             assert False, "应该抛出 ValueError"
         except ValueError as e:
             assert "类型" in str(e) or "type" in str(e).lower()

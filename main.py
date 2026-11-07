@@ -27,11 +27,14 @@ ThinkPython 应用入口
 """
 import os
 from fastapi import FastAPI
+from fastapi.responses import JSONResponse
+from sqlalchemy import text
 from contextlib import asynccontextmanager
 from loguru import logger
 
 from config.app import APP_CONFIG
 from middleware import setup_cors, request_log_middleware
+from middleware.idempotency import idempotency_middleware
 from middleware.ratelimit import setup_rate_limit
 from core.database import init_database, close_database
 from core.cache import init_cache, close_cache
@@ -44,6 +47,10 @@ from core.exception import (
 )
 from fastapi.exceptions import RequestValidationError
 from router import get_router_by_mode
+from core.logger import setup_logging
+
+# 初始化日志（幂等）：控制台 + 轮转文件，级别与时区来自 LOG_LEVEL / TIMEZONE
+setup_logging()
 
 
 @asynccontextmanager
@@ -70,15 +77,16 @@ async def lifespan(app: FastAPI):
     logger.info(f"🚀 {APP_CONFIG['name']} v{APP_CONFIG['version']} 启动中...")
     logger.info(f"📦 模块模式: {APP_CONFIG['module_mode']}")
     
-    # 安全配置检查
+    # 安全配置检查：使用默认密钥时，生产环境必须拒绝启动
     try:
-        from config.auth import USING_DEFAULT_JWT_SECRET
-        if USING_DEFAULT_JWT_SECRET:
+        from config.auth import USING_DEFAULT_JWT_SECRET, validate_secret_config
+
+        if validate_secret_config(USING_DEFAULT_JWT_SECRET, APP_CONFIG["debug"]):
             logger.warning(
-                "⚠️  检测到使用默认 JWT_SECRET，存在安全风险！\n"
-                "   请通过环境变量配置强随机密钥：\n"
-                "   export JWT_SECRET=$(openssl rand -hex 32)\n"
-                "   或在 .env 文件中添加：JWT_SECRET=<your-secret-key>"
+                "检测到使用默认 JWT_SECRET，存在严重安全风险！\n"
+                "   请生成强随机密钥并写入 .env：\n"
+                "   python -c \"import secrets; print('JWT_SECRET=' + secrets.token_hex(32))\"\n"
+                "   （当前为 debug 模式，暂时放行；生产环境将拒绝启动）"
             )
     except ImportError:
         pass
@@ -131,13 +139,16 @@ def create_app() -> FastAPI:
     
     # ===== 配置中间件 =====
     # 注意：FastAPI/Starlette 中间件的执行顺序与注册顺序相反（后注册的在最外层、最先执行）。
-    # 期望的执行顺序（从外到内）：请求日志 -> CORS -> 限流 -> 认证 -> 路由
+    # 期望的执行顺序（从外到内）：请求日志 -> CORS -> 限流 -> 认证 -> 幂等 -> 路由
     # 这样设计可确保：
     #   1. CORS 在认证之外：浏览器跨域预检请求(OPTIONS)不会被认证拦截，
     #      401/429 等错误响应也会携带 CORS 头，前端能正常读取错误信息
     #   2. 限流在认证之外：登录等免认证接口同样受到限流保护（防暴力破解）
     #   3. 请求日志在最外层：所有请求（含被中间件拦截的请求）都会被记录
-    app.middleware("http")(auth_middleware)  # 全局认证中间件（最内层）
+    #   4. 幂等在认证之内：需要读取 request.state.current_user 做用户维度隔离，
+    #      且认证失败的请求不应写入幂等缓存
+    app.middleware("http")(idempotency_middleware)  # 幂等键（最内层）
+    app.middleware("http")(auth_middleware)  # 全局认证中间件
     setup_rate_limit(app)  # API 限流中间件
     setup_cors(app)  # CORS 跨域中间件
     app.middleware("http")(request_log_middleware)  # 请求日志中间件（最外层）
@@ -156,13 +167,14 @@ def create_app() -> FastAPI:
     app.include_router(main_router)
     
     # ===== 健康检查接口 =====
-    @app.get("/health", summary="健康检查")
+    @app.get("/health", summary="存活检查")
     async def health_check():
-        """健康检查接口
-        
-        用于负载均衡器、容器编排系统（如 Kubernetes）检测应用是否存活。
-        返回应用的基本信息，不含敏感数据。
-        
+        """存活检查（liveness）
+
+        只返回进程状态，**不访问数据库与缓存**。
+        用途：容器编排判断进程是否存活，失败则重启容器。
+        刻意保持轻量，避免探活流量把数据库打满。
+
         Returns:
             Dict: 应用状态信息
         """
@@ -175,7 +187,55 @@ def create_app() -> FastAPI:
                 "debug": APP_CONFIG["debug"],
             },
         }
-    
+
+    @app.get("/health/ready", summary="就绪检查")
+    async def readiness_check():
+        """就绪检查（readiness）
+
+        检查应用依赖是否可用：数据库连通性、缓存可用性。
+        用途：负载均衡摘流 / 发布流程等待依赖就绪。
+        任一依赖不可用时返回 HTTP 503，客户端与网关据此停止转发流量。
+
+        Returns:
+            JSONResponse: 200 就绪 / 503 未就绪，data 中给出各依赖状态
+        """
+        checks = {}
+        ready = True
+
+        # 数据库连通性：一次 SELECT 1，开销约等于一次往返
+        try:
+            from core import database as db_module
+
+            if db_module.async_session is None:
+                checks["database"] = "not_initialized"
+                ready = False
+            else:
+                async with db_module.async_session() as session:
+                    await session.execute(text("SELECT 1"))
+                checks["database"] = "ok"
+        except Exception as exc:  # noqa: BLE001 - 就绪检查需要吞掉异常并上报
+            checks["database"] = f"error: {type(exc).__name__}"
+            ready = False
+
+        # 缓存可用性：写入后立即读回
+        try:
+            from core.cache import get_cache, set_cache
+
+            await set_cache("health:probe", "1", ttl=5)
+            checks["cache"] = "ok" if await get_cache("health:probe") is not None else "degraded"
+        except Exception as exc:  # noqa: BLE001
+            checks["cache"] = f"error: {type(exc).__name__}"
+            ready = False
+
+        return JSONResponse(
+            status_code=200 if ready else 503,
+            content={
+                "code": 200 if ready else 503,
+                "message": "ready" if ready else "not ready",
+                "data": checks,
+            },
+        )
+
     return app
 
 

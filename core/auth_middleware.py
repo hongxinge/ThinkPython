@@ -29,11 +29,20 @@ ThinkPython 认证中间件
 """
 from fastapi import Request, HTTPException, status
 from fastapi.responses import JSONResponse
-from typing import Callable
+from typing import Callable, Optional
 from functools import wraps
 
-from helpers.auth import decode_token, get_token_from_header, CurrentUser, is_token_blacklisted
+from helpers.auth import (
+    CurrentUser,
+    decode_token_detail,
+    get_token_from_header,
+    is_token_blacklisted,
+)
 from config.auth import SKIP_AUTH_PATHS, AUTH_ENABLED
+from config.permissions import DEFAULT_ROLE, has_all_permissions, has_any_permission
+from core.error_codes import ErrorCode
+from core.exception import error_payload
+from core.token_state import is_token_version_valid
 from router import iter_flat_routes
 
 
@@ -158,11 +167,17 @@ def _is_in_global_whitelist(path: str) -> bool:
     """
     for skip_path in SKIP_AUTH_PATHS:
         skip_path = skip_path.strip()
+        if not skip_path:
+            continue
+
         # 精确匹配
         if path == skip_path:
             return True
-        # 前缀匹配（如 "/docs" 匹配 "/docs" 和 "/docs/")
-        if path.startswith(skip_path):
+
+        # 目录级前缀匹配：必须带路径段边界，
+        # 避免 "/docs" 误放行 "/docs-evil"、"/health" 误放行 "/health-admin"
+        normalized = skip_path.rstrip("/")
+        if normalized and path.startswith(normalized + "/"):
             return True
     return False
 
@@ -203,6 +218,8 @@ async def auth_middleware(request: Request, call_next):
     
     # 2. 检查控制器白名单和装饰器标记
     # 遍历所有路由（展平嵌套路由，兼容 FastAPI 0.141+），查找匹配的路由对象
+    # 同时记录命中的 endpoint，供认证通过后做权限校验
+    matched_endpoint = None
     for route, route_prefix in iter_flat_routes(request.app.routes):
         try:
             # 检查路由是否匹配当前请求
@@ -229,6 +246,8 @@ async def auth_middleware(request: Request, call_next):
             # 检查控制器白名单
             if _is_in_controller_whitelist(method, full_path, route):
                 return await call_next(request)
+
+            matched_endpoint = getattr(route, "endpoint", None)
         except (AttributeError, TypeError, ValueError):
             # 跳过无法解析的路由（如静态文件路由）
             continue
@@ -236,63 +255,103 @@ async def auth_middleware(request: Request, call_next):
     # 3. 需要认证 - 验证 Token
     authorization = request.headers.get("Authorization")
     if not authorization:
-        return JSONResponse(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            content={
-                "code": 401,
-                "message": "未提供认证 Token，请先登录",
-                "data": None,
-            },
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    
+        return _unauthorized(ErrorCode.TOKEN_MISSING, "未提供认证 Token，请先登录")
+
     # 提取 Token
     token = get_token_from_header(authorization)
     if not token:
-        return JSONResponse(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            content={
-                "code": 401,
-                "message": "Token 格式错误，应为 Bearer <token>",
-                "data": None,
-            },
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    
-    # 验证 Token
-    payload = decode_token(token)
-    if not payload:
-        return JSONResponse(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            content={
-                "code": 401,
-                "message": "Token 无效或已过期，请重新登录",
-                "data": None,
-            },
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+        return _unauthorized(ErrorCode.TOKEN_MALFORMED, "Token 格式错误，应为 Bearer <token>")
+
+    # 验证 Token：业务接口只接受 access 类型，防止 refresh token 越权
+    payload, token_error = decode_token_detail(token, expected_type="access")
+    if payload is None:
+        if token_error == ErrorCode.TOKEN_EXPIRED:
+            # 过期走刷新流程即可，与"凭证无效"区分开，客户端才能做正确动作
+            return _unauthorized(ErrorCode.TOKEN_EXPIRED, "Token 已过期，请刷新或重新登录")
+        return _unauthorized(ErrorCode.TOKEN_INVALID, "Token 无效，请重新登录")
 
     # 检查 Token 是否在黑名单中（需启用 TOKEN_BLACKLIST_ENABLED，支持 Redis/Memory 缓存）
     if await is_token_blacklisted(token):
-        return JSONResponse(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            content={
-                "code": 401,
-                "message": "Token 已失效，请重新登录",
-                "data": None,
-            },
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+        return _unauthorized(ErrorCode.TOKEN_REVOKED, "Token 已失效，请重新登录")
+
+    # 校验 Token 版本：改密 / 禁用账号后旧 Token 立即失效
+    user_id = payload.get("user_id", 0)
+    if not await is_token_version_valid(user_id, payload.get("ver")):
+        return _unauthorized(ErrorCode.TOKEN_REVOKED, "账号信息已变更，请重新登录")
+
+    # 权限校验（RBAC）：仅对声明了 @require_permission 的接口生效
+    denied = _check_permission(payload, matched_endpoint)
+    if denied is not None:
+        return denied
 
     # Token 验证通过，注入用户信息到请求上下文
     request.state.current_user = CurrentUser(
-        user_id=payload.get("user_id", 0),
+        user_id=user_id,
         username=payload.get("username"),
         payload=payload,
     )
     
     # 放行请求
     return await call_next(request)
+
+
+def _check_permission(payload: dict, endpoint) -> Optional[JSONResponse]:
+    """校验当前用户是否具备接口所需权限
+
+    权限来源优先级：
+    1. Token payload 的 ``role``（登录时写入，零额外查询）；
+    2. Token 未携带 role（老版本 Token）时回落到 ``DEFAULT_ROLE``。
+
+    这也意味着**修改用户角色后必须让旧 Token 失效**（bump token_version），
+    否则旧 Token 内的角色会一直沿用到过期。
+
+    Args:
+        payload: 已解析的 Token payload
+        endpoint: 命中的路由端点函数，可能为 None
+
+    Returns:
+        Optional[JSONResponse]: 无权限时返回 403；有权限返回 None
+    """
+    required = tuple(getattr(endpoint, "_required_permissions", ()) or ())
+    if not required:
+        return None
+
+    role = payload.get("role") or DEFAULT_ROLE
+    mode = getattr(endpoint, "_permission_mode", "any")
+
+    if mode == "all":
+        allowed = has_all_permissions(role, required)
+    else:
+        allowed = has_any_permission(role, required)
+
+    if allowed:
+        return None
+
+    return JSONResponse(
+        status_code=status.HTTP_403_FORBIDDEN,
+        content=error_payload(
+            ErrorCode.PERMISSION_DENIED,
+            "当前角色无权访问该接口",
+            {"required": list(required), "role": role},
+        ),
+    )
+
+
+def _unauthorized(code: int, message: str) -> JSONResponse:
+    """构造统一的 401 响应
+
+    Args:
+        code: 业务错误码（见 core/error_codes.py）
+        message: 面向客户端的提示
+
+    Returns:
+        JSONResponse: 401 响应，带 WWW-Authenticate 与 request_id
+    """
+    return JSONResponse(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        content=error_payload(code, message, None),
+        headers={"WWW-Authenticate": "Bearer"},
+    )
 
 
 def _suffix_match(longer: str, shorter: str) -> bool:

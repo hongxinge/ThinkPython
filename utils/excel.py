@@ -407,6 +407,16 @@ class ExcelUtil:
             >>> headers = {"username": "用户名", "email": "邮箱"}
             >>> ExcelUtil.write_excel(data, headers, "output.xlsx")
         """
+        # 显式类型校验：headers 必须是映射、data 必须是字典列表，
+        # 避免调用方传入 list 后在 headers.keys() 处抛出难以定位的 AttributeError
+        if not isinstance(headers, dict) or not headers:
+            raise TypeError("headers 必须是 {字段名: 列名} 的非空字典")
+        if not isinstance(data, list):
+            raise TypeError("data 必须是字典列表")
+        for row in data:
+            if not isinstance(row, dict):
+                raise TypeError("data 的每个元素必须是字典")
+
         if not data:
             raise ValueError("导出数据不能为空")
         

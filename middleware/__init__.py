@@ -19,6 +19,8 @@ from fastapi import Request
 from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 from config.app import APP_CONFIG
+from core.context import bind_request_id
+from helpers.net import get_client_ip
 
 
 def setup_cors(app):
@@ -61,49 +63,86 @@ def setup_cors(app):
     )
 
 
-async def request_log_middleware(request: Request, call_next):
-    """请求日志中间件 - 记录每个请求的耗时和追踪 ID
-    
-    此中间件在请求处理前后记录以下信息：
-    - 唯一请求 ID（UUID），方便在日志中追踪同一请求的完整链路
-    - 请求方法和路径
-    - 响应状态码
-    - 请求处理耗时
-    
-    请求 ID 会被附加到响应头 X-Request-ID 中，前端可以在需要时用于问题排查。
-    
+# 客户端可自带追踪 ID 时沿用它，便于「客户端日志 ↔ 服务端日志」对齐。
+# 只接受安全字符与合理长度，避免日志注入或超长头占用内存。
+_REQUEST_ID_HEADER = "X-Request-ID"
+_REQUEST_ID_SAFE_CHARS = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.")
+_MAX_REQUEST_ID_LENGTH = 64
+
+
+def _resolve_request_id(request: Request) -> str:
+    """解析请求追踪 ID
+
+    优先使用客户端传入的 ``X-Request-ID``（移动端弱网重试时能保持同一 ID），
+    缺失或格式非法时生成新的 UUID4。
+
     Args:
         request: FastAPI 请求对象
-        call_next: 下一个中间件或路由处理函数，调用它以继续请求处理链
-        
+
     Returns:
-        Response: 处理后的响应对象（已添加 X-Request-ID 响应头）
-        
-    使用示例:
-        # 在 main.py 中注册
-        from middleware import request_log_middleware
-        
-        app.middleware("http")(request_log_middleware)
+        str: 合法的请求追踪 ID
     """
-    start_time = time.time()  # 记录请求开始时间
-    request_id = str(uuid.uuid4())  # 生成唯一的请求追踪 ID
-    
-    # 将 request_id 存储到请求状态中，方便后续中间件或路由使用
+    incoming = (request.headers.get(_REQUEST_ID_HEADER) or "").strip()
+    if (
+        incoming
+        and len(incoming) <= _MAX_REQUEST_ID_LENGTH
+        and all(ch in _REQUEST_ID_SAFE_CHARS for ch in incoming)
+    ):
+        return incoming
+    return str(uuid.uuid4())
+
+
+def _client_ip(request: Request) -> str:
+    """获取客户端 IP（兼容反向代理，受 TRUST_PROXY 控制）"""
+    return get_client_ip(request)
+
+
+async def request_log_middleware(request: Request, call_next):
+    """请求日志中间件 - 记录耗时、追踪 ID，并透传到响应头与错误体
+
+    行为约定：
+    - **沿用客户端 X-Request-ID**：移动端重试时能串起同一次业务操作；
+    - **只在结束时打一条日志**：避免每请求两条日志把生产日志量翻倍；
+    - **慢请求单独告警**：超过 ``LOG_SLOW_REQUEST_MS`` 用 WARNING 级别，
+      便于直接按级别抓慢接口；
+    - **异常也记录**：未捕获异常会带上 request_id 与耗时再抛出，
+      由全局异常处理器转成 500。
+
+    Args:
+        request: FastAPI 请求对象
+        call_next: 下一个中间件或路由处理函数
+
+    Returns:
+        Response: 处理后的响应（带 X-Request-ID 响应头）
+    """
+    request_id = _resolve_request_id(request)
+    client_ip = _client_ip(request)
+
+    # 保留 request.state 上的副本，兼容既有控制器代码的读取习惯
     request.state.request_id = request_id
-    
-    logger.info(f"请求开始 [{request_id}] {request.method} {request.url.path}")
-    
-    # 调用下一个中间件或路由处理函数
-    response = await call_next(request)
-    
-    # 计算请求处理耗时
-    process_time = time.time() - start_time
-    logger.info(
-        f"请求完成 [{request_id}] {request.method} {request.url.path} - "
-        f"{response.status_code} - {process_time:.4f}s"
-    )
-    
-    # 在响应头中添加 request_id，方便前端和运维排查问题
-    response.headers["X-Request-ID"] = request_id
-    
-    return response
+
+    # perf_counter 是单调时钟，不受系统时间调整影响，比 time.time 更准
+    start = time.perf_counter()
+    slow_threshold_ms = APP_CONFIG["log"].get("slow_request_ms", 500)
+
+    with bind_request_id(request_id, client_ip):
+        try:
+            response = await call_next(request)
+        except Exception:
+            elapsed_ms = (time.perf_counter() - start) * 1000
+            logger.exception(
+                f"{request.method} {request.url.path} -> 未捕获异常 | "
+                f"{elapsed_ms:.1f}ms | ip={client_ip} | request_id={request_id}"
+            )
+            raise
+
+        elapsed_ms = (time.perf_counter() - start) * 1000
+        log = logger.warning if elapsed_ms >= slow_threshold_ms else logger.info
+        log(
+            f"{request.method} {request.url.path} -> {response.status_code} | "
+            f"{elapsed_ms:.1f}ms | ip={client_ip} | request_id={request_id}"
+        )
+
+        # 客户端可据此上报问题，服务端按 ID 检索完整链路
+        response.headers[_REQUEST_ID_HEADER] = request_id
+        return response

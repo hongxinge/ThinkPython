@@ -40,6 +40,7 @@ ThinkPython 文件上传下载工具类
         return FileUtil.create_download_response(file_info["path"])
 """
 import os
+import re
 import uuid
 import hashlib
 import mimetypes
@@ -114,6 +115,13 @@ class FileUtil:
     
     # 默认上传目录（相对于项目根目录）
     DEFAULT_UPLOAD_DIR = UPLOAD_CONFIG.get("upload_dir", "uploads")
+
+    # 项目根目录：所有上传路径以此为基准，避免受启动时工作目录影响
+    PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+    # 上传分类的合法格式：小写字母/数字开头，允许 - 和 _，长度 1-32。
+    # 采用字符集校验而非固定枚举，既防止路径穿越，也保留自定义分类的扩展性。
+    CATEGORY_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
     
     # 默认最大文件大小（字节），默认 10MB
     DEFAULT_MAX_SIZE = UPLOAD_CONFIG.get("max_file_size", 10 * 1024 * 1024)
@@ -163,6 +171,18 @@ class FileUtil:
             return f"{uuid.uuid4().hex}{ext}"
     
     @classmethod
+    def get_upload_root(cls) -> Path:
+        """返回当前上传根目录的绝对路径。
+
+        每次调用都基于 DEFAULT_UPLOAD_DIR 重新计算，确保运行时修改配置
+        （或测试注入临时目录）后立即生效，不会用到过期的缓存值。
+        """
+        base = Path(cls.DEFAULT_UPLOAD_DIR)
+        if not base.is_absolute():
+            base = cls.PROJECT_ROOT / base
+        return base.resolve()
+
+    @classmethod
     def generate_subdir(cls, category: str = "files") -> str:
         """生成子目录路径
         
@@ -178,8 +198,46 @@ class FileUtil:
             >>> FileUtil.generate_subdir("images")
             "images/2024/01/01"
         """
+        category = (category or "files").strip()
+        if not cls.CATEGORY_PATTERN.match(category):
+            raise ValueError(f"非法的上传分类: {category}")
+
         now = datetime.now()
         return f"{category}/{now.strftime('%Y/%m/%d')}"
+
+    @classmethod
+    def resolve_upload_path(cls, file_path: Union[str, Path]) -> Path:
+        """把客户端传入的路径解析为上传目录内的绝对路径。
+
+        规则：
+        1. 相对路径以项目根目录为基准（与上传接口返回的 file_path 一致）；
+        2. 解析符号链接后，最终路径必须仍位于上传根目录内；
+        3. 空路径、含空字节、越界路径一律拒绝。
+
+        Args:
+            file_path: 客户端提交的文件路径（相对或绝对）
+
+        Returns:
+            Path: 位于上传根目录内的绝对路径
+
+        Raises:
+            ValueError: 路径非法或越出上传根目录
+        """
+        raw = str(file_path or "").strip()
+        if not raw or "\x00" in raw:
+            raise ValueError("文件路径不合法")
+
+        candidate = Path(raw)
+        if not candidate.is_absolute():
+            candidate = cls.PROJECT_ROOT / candidate
+
+        resolved = candidate.resolve()
+        try:
+            resolved.relative_to(cls.get_upload_root())
+        except ValueError as exc:
+            raise ValueError("文件路径不合法：仅允许访问上传目录内的文件") from exc
+
+        return resolved
     
     @classmethod
     async def validate_file(
@@ -232,11 +290,15 @@ class FileUtil:
             raise ValueError(f"不支持的文件类型: {mime_type}")
         
         # 验证文件大小
-        max_size = max_size or cls.DEFAULT_MAX_SIZE
+        max_size = max_size if max_size is not None else cls.DEFAULT_MAX_SIZE
         
-        # 读取文件内容并检查大小
-        content = await file.read()
-        file_size = len(content)
+        # 优先使用 Starlette 提供的 size（无需读取内容）；老版本无该属性时回退读取。
+        # 这样避免大文件被整块读进内存，并发上传时不会出现内存峰值翻倍。
+        file_size = getattr(file, "size", None)
+        if not isinstance(file_size, int):
+            content = await file.read()
+            file_size = len(content)
+            await file.seek(0)
         
         if file_size > max_size:
             max_mb = max_size / 1024 / 1024
@@ -259,6 +321,7 @@ class FileUtil:
         upload_dir: Optional[str] = None,
         category: str = "files",
         allowed_extensions: Optional[set] = None,
+        allowed_mime_types: Optional[set] = None,
         max_size: Optional[int] = None,
         custom_filename: Optional[str] = None,
     ) -> Dict[str, Any]:
@@ -324,19 +387,30 @@ class FileUtil:
         # 使用配置的默认限制
         if allowed_extensions is None and UPLOAD_CONFIG.get("allowed_extensions"):
             allowed_extensions = set(UPLOAD_CONFIG["allowed_extensions"])
+        if allowed_mime_types is None and UPLOAD_CONFIG.get("allowed_mime_types"):
+            allowed_mime_types = set(UPLOAD_CONFIG["allowed_mime_types"])
         if max_size is None and UPLOAD_CONFIG.get("max_file_size"):
             max_size = UPLOAD_CONFIG["max_file_size"]
         
         # 验证文件
-        validation = await cls.validate_file(file, allowed_extensions, max_size=max_size)
+        validation = await cls.validate_file(
+            file,
+            allowed_extensions,
+            allowed_mime_types=allowed_mime_types,
+            max_size=max_size,
+        )
         
-        # 确定上传目录
+        # 确定上传目录（统一基于项目根，避免受启动时工作目录影响）
         if upload_dir is None:
-            subdir = cls.generate_subdir(category)
-            upload_dir = os.path.join(cls.DEFAULT_UPLOAD_DIR, subdir)
-        
+            target_dir = cls.get_upload_root() / cls.generate_subdir(category)
+        else:
+            # 允许自定义绝对目录（如容器挂载卷）；相对路径统一以项目根为基准
+            candidate = Path(upload_dir)
+            target_dir = candidate if candidate.is_absolute() else (cls.PROJECT_ROOT / candidate)
+            target_dir = target_dir.resolve()
+
         # 确保目录存在
-        os.makedirs(upload_dir, exist_ok=True)
+        target_dir.mkdir(parents=True, exist_ok=True)
         
         # 生成文件名
         if custom_filename:
@@ -347,8 +421,12 @@ class FileUtil:
             filename = cls.generate_filename(file.filename)
         
         # 保存文件路径
-        file_path = os.path.join(upload_dir, filename)
-        absolute_path = os.path.abspath(file_path)
+        absolute_path = target_dir / filename
+        try:
+            relative_path = absolute_path.relative_to(cls.PROJECT_ROOT).as_posix()
+        except ValueError:
+            # 自定义目录位于项目外时，直接返回绝对路径
+            relative_path = absolute_path.as_posix()
         
         # 保存文件（流式写入，避免大文件占用过多内存）
         file_size = 0
@@ -363,14 +441,14 @@ class FileUtil:
         # 将文件指针重置到开头
         await file.seek(0)
         
-        # 生成访问 URL（将路径转换为 URL 格式）
-        url = "/" + file_path.replace(os.sep, "/").lstrip("/")
-        
+        # 生成访问 URL
+        url = "/" + relative_path.lstrip("/")
+
         return {
             "filename": filename,
             "original_filename": file.filename,
-            "file_path": file_path,
-            "absolute_path": absolute_path,
+            "file_path": relative_path,
+            "absolute_path": str(absolute_path),
             "file_size": file_size,
             "mime_type": validation["mime_type"],
             "extension": validation["extension"],

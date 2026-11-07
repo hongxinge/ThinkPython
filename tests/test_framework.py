@@ -306,7 +306,7 @@ class TestCache:
         from config.cache import CACHE_CONFIG
         assert isinstance(CACHE_CONFIG, dict)
         assert "type" in CACHE_CONFIG
-        assert CACHE_CONFIG["type"] in ["redis", "memory", "memcached"]
+        assert CACHE_CONFIG["type"] in ["redis", "memory"]
 
     def test_cache_module_structure(self):
         """测试缓存模块结构"""
@@ -395,14 +395,18 @@ class TestTokenRefresh:
         assert "jti" in payload
 
     def test_decode_refresh_token(self):
-        """测试解码 Refresh Token"""
+        """仅当显式声明期望类型为 refresh 时才可解码"""
         from helpers.auth import create_refresh_token, decode_token
         token = create_refresh_token(user_id=1)
-        payload = decode_token(token)
+
+        payload = decode_token(token, expected_type="refresh")
         assert payload is not None
         assert payload["user_id"] == 1
         assert payload["type"] == "refresh"
         assert "jti" in payload
+
+        # 默认按 access 校验，refresh token 必须被拒绝
+        assert decode_token(token) is None
 
     def test_refresh_access_token(self):
         """测试刷新 Access Token（异步函数，使用 asyncio.run 调用）"""
@@ -415,23 +419,22 @@ class TestTokenRefresh:
         assert "expires_in" in result
 
     def test_invalid_refresh_token(self):
-        """测试无效 Refresh Token"""
+        """无效 Refresh Token 必须抛出 ValueError"""
         from helpers.auth import refresh_access_token
-        try:
+
+        with pytest.raises(ValueError):
             asyncio.run(refresh_access_token("invalid.token.here"))
-            assert False, "应该抛出 ValueError"
-        except ValueError:
-            pass
 
     def test_access_token_used_as_refresh(self):
-        """测试 Access Token 不能用于刷新"""
+        """Access Token 不能用于刷新，且错误信息需指明类型不匹配"""
         from helpers.auth import create_token, refresh_access_token
+
         access_token = create_token(user_id=1)
-        try:
+        with pytest.raises(ValueError) as exc_info:
             asyncio.run(refresh_access_token(access_token))
-            assert False, "应该抛出 ValueError"
-        except ValueError as e:
-            assert "类型" in str(e) or "type" in str(e).lower()
+
+        message = str(exc_info.value).lower()
+        assert "类型" in message or "type" in message
 
 
 # ============== 限流测试 ==============
@@ -457,11 +460,12 @@ class TestRateLimit:
         bucket.tokens = 0  # 清空令牌
         assert bucket.consume() is False  # 应该失败
 
-    def test_memory_rate_limiter(self):
-        """测试内存限流器"""
+    @pytest.mark.asyncio
+    async def test_memory_rate_limiter(self):
+        """测试内存限流器（与 Redis 限流器同为异步接口）"""
         from middleware.ratelimit import MemoryRateLimiter
         limiter = MemoryRateLimiter()
-        assert limiter.is_allowed("test:key", rate=10, capacity=10) is True
+        assert await limiter.is_allowed("test:key", rate=10, capacity=10) is True
 
     def test_rate_limit_middleware_structure(self):
         """测试限流中间件结构"""

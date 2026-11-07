@@ -159,10 +159,16 @@ class UserController(BaseController):
 ## 第 4 步：数据库迁移
 
 ```bash
-python think.py db-migrate
+# 生成迁移脚本（模型有变更时）
+python think.py db-migrate --auto -m "初始表结构"
+
+# 应用迁移到最新版本
+python think.py db-migrate --upgrade
 ```
 
-该命令会自动扫描所有 Model 并在数据库中创建对应的表。
+`--upgrade` 会按 `alembic/versions/` 里的脚本版本化建表，可回滚、可追溯。
+不带参数的 `python think.py db-migrate` 是"简单模式"（等价于 `create_all`，
+只补建缺失的表，不记录版本），仅适合临时试验，不要用于需要演进的表结构。
 
 ## 第 5 步：测试接口
 

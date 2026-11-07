@@ -328,7 +328,18 @@ class TestFileDelete:
         assert result is False
 
     def test_delete_file_permission_error(self):
-        pass
+        """文件被占用时 delete_file 应抛出 PermissionError，而不是静默返回。"""
+        from unittest.mock import patch
+
+        tmp_path = tempfile.mktemp()
+        Path(tmp_path).write_bytes(b"test content")
+        try:
+            with patch.object(Path, "unlink", side_effect=PermissionError("locked")):
+                with pytest.raises(PermissionError):
+                    FileUtil.delete_file(tmp_path)
+        finally:
+            if Path(tmp_path).exists():
+                Path(tmp_path).unlink()
 
 
 class TestFileInfo:

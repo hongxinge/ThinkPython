@@ -13,6 +13,8 @@ from core.database import Base
 
 
 class TestModel(Base):
+    # 告知 pytest 这不是测试类，避免 PytestCollectionWarning
+    __test__ = False
     __tablename__ = "test_models_sr"
     id = Column(Integer, primary_key=True, autoincrement=True)
     name = Column(String(100), nullable=False)
@@ -49,6 +51,8 @@ class TestBaseServiceCrud:
     def service(self):
         """创建测试服务实例"""
         mock_db = AsyncMock()
+        # AsyncSession.add() 是同步方法，必须用 MagicMock，否则会产生未 await 的协程
+        mock_db.add = MagicMock()
         service = BaseService(mock_db)
         service.model_class = TestModel
         return service
@@ -142,6 +146,8 @@ class TestBaseServicePagination:
     def service(self):
         """创建测试服务实例"""
         mock_db = AsyncMock()
+        # AsyncSession.add() 是同步方法，必须用 MagicMock，否则会产生未 await 的协程
+        mock_db.add = MagicMock()
         service = BaseService(mock_db)
         service.model_class = TestModel
         return service
@@ -245,20 +251,24 @@ class TestRouterModule:
 class TestRouterAutoDiscovery:
     """路由自动发现测试"""
 
-    def test_register_single_module_directory_not_exists(self, caplog):
-        """测试单模块目录不存在的情况"""
-        from router import register_single_module
+    def test_register_single_module_directory_not_exists(self, tmp_path, monkeypatch):
+        """控制器目录不存在时应跳过注册：不抛异常，也不产生任何路由。"""
+        import router as router_module
         from fastapi import APIRouter
-        
-        main_router = APIRouter()
-        register_single_module(main_router)
 
-    def test_register_multi_modules_auto_discover(self, caplog):
-        """测试多模块自动发现"""
+        # 把项目根指向空目录，使 app/single/controller 不存在
+        monkeypatch.setattr(router_module, "BASE_DIR", tmp_path)
+        main_router = APIRouter()
+        router_module.register_single_module(main_router)
+
+        assert len(main_router.routes) == 0
+
+    def test_register_multi_modules_auto_discover(self):
+        """自动发现模式应注册出带模块前缀的路由。"""
         from router import register_multi_modules
         from fastapi import APIRouter
         from config.app import APP_CONFIG
-        
+
         original_modules = APP_CONFIG["modules"]
         try:
             APP_CONFIG["modules"] = [""]
@@ -267,11 +277,21 @@ class TestRouterAutoDiscovery:
         finally:
             APP_CONFIG["modules"] = original_modules
 
+        from router import iter_flat_routes
+
+        # FastAPI 0.141 起 include_router 会包装为嵌套路由，需展平后再取完整路径
+        paths = [prefix + route.path for route, prefix in iter_flat_routes(main_router.routes)]
+        assert paths, "自动发现模式未注册任何路由"
+        assert any(path.startswith("/api") for path in paths)
+
 
 # ============== 自定义服务子类测试 ==============
 
 class TestCustomService:
     """自定义服务子类（用于测试）"""
+
+    # 名字以 Test 开头但带 __init__，显式排除以免被 pytest 收集
+    __test__ = False
 
     def __init__(self, db):
         self.db = db

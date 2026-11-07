@@ -1,8 +1,13 @@
-# ThinkPython Docker Compose - 完整生产环境示例
-# 包含：应用 + MySQL + Redis + Nginx
-# 使用方式: docker-compose up -d
-
-version: '3.8'
+# ThinkPython 生产部署编排：应用 + MySQL + Redis + Nginx
+#
+# 使用步骤：
+#   1. cp .env.example .env      # 在 deploy/ 目录内执行，并填写真实密钥与密码
+#   2. docker compose up -d --build
+#   3. curl http://localhost/health
+#
+# 首次启动会自动执行数据库迁移（见 app.command）。
+# 多副本部署时请去掉 command 里的迁移步骤，改为发布流程中的单独 Job，
+# 避免多个副本并发执行 DDL。
 
 services:
   # ==============================
@@ -12,26 +17,46 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile
+    image: thinkpython:latest
     container_name: thinkpython-app
     restart: unless-stopped
+    # 生产配置集中放在 deploy/.env（不要与仓库根的开发用 .env 混用）
+    env_file:
+      - .env
     environment:
-      - APP_DEBUG=false
-      - DB_TYPE=mysql
-      - DB_HOST=db
-      - DB_PORT=3306
-      - DB_NAME=thinkpython
-      - DB_USER=root
-      - DB_PASSWORD=${DB_PASSWORD:-secure_password_here}
-      - CACHE_TYPE=redis
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
-      - JWT_SECRET=${JWT_SECRET:-change_this_to_a_secure_random_key}
-      - AUTH_ENABLED=true
-      - RATE_LIMIT_ENABLED=true
-      - RATE_LIMIT_BACKEND=redis
+      TZ: Asia/Shanghai
+      APP_DEBUG: "false"
+      DB_TYPE: mysql
+      DB_HOST: db
+      DB_PORT: "3306"
+      DB_NAME: thinkpython
+      CACHE_TYPE: redis
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      AUTH_ENABLED: "true"
+      RATE_LIMIT_ENABLED: "true"
+      RATE_LIMIT_BACKEND: redis
+      # 容器内 CPU 核数可能读到宿主机，显式限制 worker 数
+      GUNICORN_WORKERS: "${GUNICORN_WORKERS:-4}"
+    # 启动前先迁移，再交给 gunicorn；迁移失败会中断启动（非零退出码）
+    command: >
+      sh -c "python think.py db-migrate --upgrade &&
+             gunicorn -c deploy/gunicorn.conf.py main:app"
     volumes:
       - app-logs:/app/logs
       - app-uploads:/app/uploads
+    expose:
+      - "8000"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).status == 200 else 1)"
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
     depends_on:
       db:
         condition: service_healthy
@@ -47,21 +72,27 @@ services:
     image: mysql:8.0
     container_name: thinkpython-db
     restart: unless-stopped
+    env_file:
+      - .env
     environment:
-      - MYSQL_ROOT_PASSWORD=${DB_PASSWORD:-secure_password_here}
-      - MYSQL_DATABASE=thinkpython
-      - MYSQL_CHARSET=utf8mb4
-      - MYSQL_COLLATION=utf8mb4_unicode_ci
+      MYSQL_ROOT_PASSWORD: "${DB_ROOT_PASSWORD:?请在 deploy/.env 中设置 DB_ROOT_PASSWORD}"
+      MYSQL_DATABASE: thinkpython
+      TZ: Asia/Shanghai
     volumes:
       - db-data:/var/lib/mysql
-      - ./mysql-init.sql:/docker-entrypoint-initdb.d/init.sql  # 可选：初始化脚本
-    ports:
-      - "3306:3306"  # 仅开发环境开放，生产环境应注释此行
+      # 仅在数据卷为空时执行；修改后需 down -v 才能重新生效
+      - ./mysql-init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    # 生产环境不要对外暴露数据库端口，仅在调试时临时放开
+    # ports:
+    #   - "3306:3306"
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      test:
+        - CMD-SHELL
+        - mysqladmin ping -h 127.0.0.1 -u root -p"$$MYSQL_ROOT_PASSWORD"
       interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 10
+      start_period: 30s
     networks:
       - thinkpython-network
 
@@ -72,11 +103,22 @@ services:
     image: redis:7-alpine
     container_name: thinkpython-redis
     restart: unless-stopped
-    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-}
+    command: >
+      sh -c 'if [ -n "$$REDIS_PASSWORD" ];
+             then exec redis-server --appendonly yes --requirepass "$$REDIS_PASSWORD";
+             else exec redis-server --appendonly yes; fi'
+    env_file:
+      - .env
     volumes:
       - redis-data:/data
-    ports:
-      - "6379:6379"  # 仅开发环境开放，生产环境应注释此行
+    # 生产环境不要对外暴露 Redis 端口
+    # ports:
+    #   - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
     networks:
       - thinkpython-network
 
@@ -92,9 +134,12 @@ services:
       - "443:443"
     volumes:
       - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
-      - ./ssl:/etc/nginx/ssl:ro  # SSL 证书目录（需自行准备）
+      - ./ssl:/etc/nginx/ssl:ro
+      # 与 app 共享上传目录，Nginx 才能直接返回静态文件
+      - app-uploads:/app/uploads:ro
     depends_on:
-      - app
+      app:
+        condition: service_healthy
     networks:
       - thinkpython-network
 

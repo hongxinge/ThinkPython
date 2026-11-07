@@ -90,6 +90,85 @@ DATABASE_CONFIG = {
 }
 
 
+# 异步驱动 -> 同步驱动映射
+# Alembic 的迁移命令在同步上下文中执行，必须使用同步驱动。
+# SQLite 的同步驱动（pysqlite）由标准库提供，零额外依赖；
+# MySQL 使用 pymysql（aiomysql 已依赖它，无需额外安装）；
+# PostgreSQL / MSSQL 的同步驱动属于可选依赖，缺失时给出明确提示。
+_SYNC_DRIVER_MAP = {
+    "sqlite": "sqlite",
+    "mysql": "mysql+pymysql",
+    "mariadb": "mariadb+pymysql",
+    "postgresql": "postgresql+psycopg2",
+    "mssql": "mssql+pyodbc",
+}
+
+# 同步驱动的可选依赖安装提示
+_SYNC_DRIVER_HINTS = {
+    "postgresql": "pip install psycopg2-binary",
+    "mssql": "pip install pyodbc",
+}
+
+
+def get_sync_database_url(url: str = None) -> str:
+    """把应用使用的异步数据库 URL 转换成同步驱动 URL
+
+    Alembic 迁移在同步上下文中运行，直接使用 ``mysql+aiomysql`` 这类异步 URL
+    会抛出 ``MissingGreenlet``。此函数负责驱动替换，其余部分（主机、账号、
+    密码、库名、查询参数）原样保留，避免手工拼接字符串导致特殊字符转义错误。
+
+    Args:
+        url: 待转换的 URL，不传则使用 :func:`get_database_url` 的解析结果
+
+    Returns:
+        str: 同步驱动 URL
+
+    Raises:
+        ValueError: URL 无法解析，或后端没有已知的同步驱动
+
+    使用示例:
+        >>> get_sync_database_url("sqlite+aiosqlite:///./data/database.db")
+        'sqlite:///./data/database.db'
+        >>> get_sync_database_url("mysql+aiomysql://root:pwd@db:3306/app")
+        'mysql+pymysql://root:pwd@db:3306/app'
+    """
+    # 延迟导入：仅迁移场景需要，避免 config 模块在极简环境下的导入成本
+    from sqlalchemy.engine import make_url
+
+    async_url = url or get_database_url()
+
+    try:
+        parsed = make_url(async_url)
+    except Exception as exc:  # noqa: BLE001 - 统一转换为可读的配置错误
+        raise ValueError(f"数据库 URL 无法解析: {async_url}") from exc
+
+    backend = parsed.get_backend_name()
+    sync_driver = _SYNC_DRIVER_MAP.get(backend)
+    if sync_driver is None:
+        raise ValueError(
+            f"数据库类型 {backend} 没有配置同步驱动，无法执行 Alembic 迁移。"
+            f"请在 config/database.py 的 _SYNC_DRIVER_MAP 中补充映射。"
+        )
+
+    if parsed.drivername == sync_driver:
+        return async_url
+
+    if backend == "sqlite":
+        # SQLite 的 :memory: 与相对路径会被 make_url 重新编码（:memory: -> %3Amemory%3A），
+        # 直接替换驱动前缀可以完整保留原始路径写法。
+        prefix = f"{parsed.drivername}://"
+        if async_url.startswith(prefix):
+            return "sqlite://" + async_url[len(prefix):]
+
+    try:
+        return parsed.set(drivername=sync_driver).render_as_string(hide_password=False)
+    except ModuleNotFoundError as exc:
+        hint = _SYNC_DRIVER_HINTS.get(backend, f"pip install {sync_driver}")
+        raise ValueError(
+            f"执行数据库迁移需要同步驱动 {sync_driver}，请先安装：{hint}"
+        ) from exc
+
+
 def get_database_url(config: dict = None) -> str:
     """根据当前数据库配置生成 SQLAlchemy 连接 URL
     

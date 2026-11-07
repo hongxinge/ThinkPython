@@ -21,6 +21,7 @@ ThinkPython 示例后台管理员控制器 - 多模块模式
 """
 from pydantic import BaseModel
 from core.base_controller import BaseController
+from helpers.auth import require_permission
 from helpers.response import success_response
 
 
@@ -111,6 +112,7 @@ class AdminController(BaseController):
         
         # 获取菜单权限接口
         @self.router.get("/admin/menu", summary="获取菜单权限")
+        @require_permission("admin:menu")
         async def get_menu():
             """根据管理员角色返回可访问的菜单列表
             

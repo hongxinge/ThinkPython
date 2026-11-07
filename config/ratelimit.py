@@ -48,8 +48,11 @@ RATE_LIMIT_BACKEND = os.getenv("RATE_LIMIT_BACKEND", "memory")
 # 支持的规则类型：
 # - "global": 全局限流，限制整个应用的请求频率
 # - "ip": IP 限流，限制单个 IP 的请求频率
-# - "user": 用户限流，限制单个用户的请求频率（需要认证）
-# - 其他自定义规则名：路由限流，需要额外配置 "paths" 字段
+# - 其他自定义规则名：路由限流，需配置 "paths" 字段
+#   paths 支持精确匹配、目录前缀、以及忽略模块前缀的路径段后缀匹配
+#   （例如 "/auth/login" 能命中 "/api/auth/login"）
+#
+# 说明：按登录用户的限流（user 维度）尚未实现，当前按 IP 维度区分。
 
 RATE_LIMIT_RULES = {
     # 全局限流：1000 次/分钟（约 16.7 次/秒）

@@ -193,12 +193,14 @@ class TestExceptionHandlers:
             raise RuntimeError("测试运行时错误")
 
         try:
-            response = self.client.get("/test-global-exception")
+            # Starlette 的 ServerErrorMiddleware 在处理完异常后会重新抛出，
+            # 因此必须关闭 raise_server_exceptions 才能观察到处理器产出的 500 响应。
+            with TestClient(self.app, raise_server_exceptions=False) as client:
+                response = client.get("/test-global-exception")
             assert response.status_code == 500
             data = response.json()
             assert data["code"] == 500
-        except RuntimeError:
-            pass
+            assert data["message"] == "服务器内部错误"
         finally:
             APP_CONFIG["debug"] = original_debug
 

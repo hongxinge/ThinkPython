@@ -1,6 +1,6 @@
 # 缓存使用
 
-ThinkPython 支持 Redis、Memory、Memcached 三种缓存后端，通过 `.env` 文件切换。
+ThinkPython 支持 Redis 与 Memory 两种缓存后端，通过 `.env` 文件切换。
 
 ## 配置方式
 
@@ -38,14 +38,8 @@ REDIS_PASSWORD=
 pip install redis
 ```
 
-### Memcached
-
-**.env 配置：**
-
-```env
-CACHE_TYPE=memcached
-MEMCACHED_SERVERS=127.0.0.1:11211
-```
+> 说明：Memcached 后端尚未实现。设置 `CACHE_TYPE=memcached` 会在启动时
+> 抛出 `ValueError` 并提示可选值 `memory` / `redis`，不会静默降级。
 
 ## 代码示例
 

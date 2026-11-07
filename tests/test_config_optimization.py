@@ -16,18 +16,16 @@ class TestDatabaseUrlConfig:
         from config.database import DATABASE_URL
         assert isinstance(DATABASE_URL, str)
 
-    def test_database_url_priority(self):
-        """测试 DATABASE_URL 优先级高于独立参数"""
-        from config.database import get_database_url
-        
-        # 保存原始 DATABASE_URL
-        from config.database import DATABASE_URL
-        original_url = DATABASE_URL
-        
-        # 如果没有设置 DATABASE_URL，测试 fallback 行为
-        url = get_database_url()
-        assert isinstance(url, str)
-        assert len(url) > 0
+    def test_database_url_priority(self, monkeypatch):
+        """DATABASE_URL 非空时必须优先于分散的独立参数"""
+        import config.database as db_config
+
+        expected = "postgresql+asyncpg://user:pass@localhost:5432/demo"
+        monkeypatch.setattr(db_config, "DATABASE_URL", expected)
+
+        assert db_config.get_database_url() == expected
+        # 即使传入自定义配置，DATABASE_URL 仍应优先
+        assert db_config.get_database_url({"type": "sqlite", "sqlite_path": "./x.db"}) == expected
 
     def test_get_database_url_with_url_config(self):
         """测试使用 DATABASE_URL 配置"""
@@ -113,25 +111,32 @@ class TestUrlParsing:
     """URL 格式解析测试"""
 
     def test_valid_database_url_formats(self):
-        """测试有效的数据库 URL 格式"""
-        valid_urls = [
-            "sqlite+aiosqlite:///./data/database.db",
-            "mysql+aiomysql://root:pass@localhost:3306/mydb?charset=utf8mb4",
-            "postgresql+asyncpg://user:pass@localhost:5432/mydb",
-            "mssql+aioodbc://sa:pass@localhost:1433/mydb",
-        ]
-        for url in valid_urls:
-            assert "://" in url
+        """各数据库 URL 必须能被 SQLAlchemy 正确解析出驱动"""
+        from sqlalchemy.engine import make_url
+
+        expected = {
+            "sqlite+aiosqlite:///./data/database.db": "sqlite+aiosqlite",
+            "mysql+aiomysql://root:pass@localhost:3306/mydb?charset=utf8mb4": "mysql+aiomysql",
+            "postgresql+asyncpg://user:pass@localhost:5432/mydb": "postgresql+asyncpg",
+            "mssql+aioodbc://sa:pass@localhost:1433/mydb": "mssql+aioodbc",
+        }
+        for url, drivername in expected.items():
+            assert make_url(url).drivername == drivername
 
     def test_valid_redis_url_formats(self):
-        """测试有效的 Redis URL 格式"""
-        valid_urls = [
-            "redis://127.0.0.1:6379/0",
-            "redis://:password@127.0.0.1:6379/0",
-            "redis://user:password@redis-server:6379/1",
+        """Redis URL 必须能被正确解析出 scheme 与主机"""
+        from urllib.parse import urlparse
+
+        cases = [
+            ("redis://127.0.0.1:6379/0", "127.0.0.1", 6379),
+            ("redis://:password@127.0.0.1:6379/0", "127.0.0.1", 6379),
+            ("redis://user:password@redis-server:6379/1", "redis-server", 6379),
         ]
-        for url in valid_urls:
-            assert url.startswith("redis://")
+        for url, host, port in cases:
+            parsed = urlparse(url)
+            assert parsed.scheme == "redis"
+            assert parsed.hostname == host
+            assert parsed.port == port
 
 
 # ============== 配置优先级测试 ==============
@@ -139,14 +144,17 @@ class TestUrlParsing:
 class TestConfigPriority:
     """配置优先级测试"""
 
-    def test_database_url_empty_uses_fallback(self):
-        """测试 DATABASE_URL 为空时使用 fallback"""
-        from config.database import DATABASE_URL, get_database_url, DATABASE_CONFIG
-        
-        if not DATABASE_URL:
-            url = get_database_url()
-            assert isinstance(url, str)
-            assert len(url) > 0
+    def test_database_url_empty_uses_fallback(self, monkeypatch):
+        """DATABASE_URL 为空时必须根据 DB_TYPE 生成可用的 fallback URL"""
+        import config.database as db_config
+        from sqlalchemy.engine import make_url
+
+        monkeypatch.setattr(db_config, "DATABASE_URL", "")
+        url = db_config.get_database_url()
+
+        assert url
+        # fallback 的方言必须与当前 DB_TYPE 一致
+        assert make_url(url).get_backend_name() == db_config.DATABASE_CONFIG["type"]
 
     def test_cache_config_consistency(self):
         """测试 CACHE_CONFIG 与独立常量一致性"""

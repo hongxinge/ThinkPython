@@ -1,111 +1,138 @@
-"""
-ThinkPython Alembic 迁移环境配置
+"""ThinkPython Alembic 迁移环境配置
 
-本文件是 Alembic 数据库迁移的核心配置文件，负责：
-1. 加载数据库连接配置
-2. 导入所有模型元数据
-3. 执行自动迁移检测
+职责：
+1. 从应用配置（DATABASE_URL / DB_TYPE）解析数据库连接，并转换为**同步驱动** URL；
+2. 导入 app/ 下全部模型，向 Alembic 提供完整的 Base.metadata；
+3. 按 Alembic 的离线 / 在线模式执行迁移。
 
-工作原理：
-1. Alembic 读取 SQLAlchemy 的 Base.metadata 获取所有模型定义
-2. 对比模型定义与数据库当前状态，生成迁移脚本
-3. 执行迁移脚本，应用变更到数据库
+为什么必须是同步驱动：
+    Alembic 的迁移脚本在同步上下文中运行。若 url 里带 ``+aiomysql`` / ``+aiosqlite``
+    等异步驱动，SQLAlchemy 会抛出 ``MissingGreenlet``。转换逻辑集中在
+    ``config.database.get_sync_database_url()``，避免各处手工拼字符串。
 
-使用方式:
-    # 1. 自动生成迁移脚本（根据模型变更）
-    python think.py db-migrate --auto -m "添加用户表"
-    
-    # 2. 执行迁移（应用变更到数据库）
-    python think.py db-migrate
-    
-    # 3. 回滚迁移（撤销最近一次变更）
-    python think.py db-migrate --downgrade
-    
-    # 4. 查看迁移历史
-    python think.py db-migrate --history
+为什么不再静默忽略模型导入失败：
+    模型导入失败意味着 Base.metadata 缺表，自动生成的迁移会**漏表**或把已有表
+    判定为"需要删除"。默认直接失败并给出模块名；确需跳过时设置环境变量
+    ``ALEMBIC_ALLOW_MODEL_IMPORT_ERRORS=true``。
 
-注意事项:
-- 修改模型后务必先生成迁移脚本，再执行迁移
-- 切勿直接修改数据库结构，应通过迁移管理
-- 生产环境执行迁移前建议备份数据库
+使用方式（统一走 CLI，自动携带项目配置）::
+
+    python think.py db-migrate --auto -m "添加订单表"   # 生成迁移脚本
+    python think.py db-migrate --upgrade               # 应用迁移
+    python think.py db-migrate --downgrade             # 回滚一步
+    python think.py db-migrate --history               # 查看历史
 """
 import os
 import sys
-from pathlib import Path
 from logging.config import fileConfig
+from pathlib import Path
 
-from sqlalchemy import engine_from_config, pool
 from alembic import context
+from sqlalchemy import engine_from_config, pool
 
-# 添加项目根目录到 Python 路径
+# 保证项目根目录可导入（alembic.ini 的 prepend_sys_path 之外的二次保险）
 BASE_DIR = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(BASE_DIR))
+if str(BASE_DIR) not in sys.path:
+    sys.path.insert(0, str(BASE_DIR))
 
-# 从 ThinkPython 配置中读取数据库连接
-from config.database import get_database_url, DATABASE_CONFIG
+from config.database import get_sync_database_url  # noqa: E402
 
-# Alembic Config 对象，从 alembic.ini 文件中加载配置
+# Alembic 配置对象
 config = context.config
 
-# 设置数据库连接 URL，从 ThinkPython 配置中读取
-config.set_main_option("sqlalchemy.url", get_database_url())
+# 写入同步 URL。
+# 注意：configparser 会把 "%" 当作插值符号，密码中含 % 时必须转义，
+# 否则 set_main_option 会直接抛 InterpolationSyntaxError。
+config.set_main_option("sqlalchemy.url", get_sync_database_url().replace("%", "%%"))
 
-# 加载 Alembic 日志配置（如果 alembic.ini 存在）
+# 加载日志配置；disable_existing_loggers=False 避免 Alembic 关掉应用自己的 logger
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 
 def import_all_models():
-    """导入所有模型，使 Alembic 能够检测到模型变更
-    
-    此函数会扫描 app/ 目录下所有 model/ 子目录，
-    并导入其中的所有模型文件。
+    """导入 app/ 下所有模型模块，返回 Base.metadata
+
+    Alembic 只能看到"已被导入"的模型类。CLI 进程默认不加载任何模型，
+    因此这里主动扫描 ``app/**/model/`` 目录：
+    1. 先导入 model 包本身（执行其 ``__init__.py``，兼容 re-export 写法）；
+    2. 再导入包内所有非下划线开头的模块。
+
+    Returns:
+        MetaData: SQLAlchemy 元数据对象
+
+    Raises:
+        RuntimeError: 存在模型导入失败且未开启宽松模式
     """
     from core.database import Base
-    
+
     app_dir = BASE_DIR / "app"
     if not app_dir.exists():
-        return
-    
-    # 递归扫描所有 model 目录
-    for model_dir in app_dir.rglob("model"):
+        return Base.metadata
+
+    allow_errors = os.getenv("ALEMBIC_ALLOW_MODEL_IMPORT_ERRORS", "false").lower() == "true"
+    failed = []
+
+    def _import_module_name(module_name: str) -> None:
+        try:
+            __import__(module_name)
+        except Exception as exc:  # noqa: BLE001 - 需要一次性收集全部失败项
+            failed.append((module_name, exc))
+
+    for model_dir in sorted(app_dir.rglob("model")):
         if not model_dir.is_dir():
             continue
-        
-        # 导入该目录下的所有 Python 文件（除了 __init__.py）
-        for model_file in model_dir.glob("*.py"):
+
+        # 1) 导入 model 包自身
+        package_name = str(model_dir.relative_to(BASE_DIR)).replace(os.sep, ".")
+        _import_module_name(package_name)
+
+        # 2) 导入包内模块
+        for model_file in sorted(model_dir.glob("*.py")):
             if model_file.name.startswith("_"):
                 continue
-            
-            # 构造模块路径
-            relative_path = model_file.relative_to(BASE_DIR)
-            module_name = str(relative_path.with_suffix("")).replace(os.sep, ".")
-            
-            try:
-                __import__(module_name)
-            except Exception as e:
-                # 忽略导入失败的模型（可能是依赖未安装）
-                pass
-    
-    # 返回 Base.metadata 供 Alembic 使用
-    from core.database import Base
+            module_name = str(model_file.relative_to(BASE_DIR).with_suffix("")).replace(os.sep, ".")
+            _import_module_name(module_name)
+
+    if failed:
+        details = "\n".join(f"  - {name}: {exc.__class__.__name__}: {exc}" for name, exc in failed)
+        if allow_errors:
+            print(
+                f"[alembic] 警告：{len(failed)} 个模型导入失败，迁移可能漏表：\n{details}",
+                file=sys.stderr,
+            )
+        else:
+            raise RuntimeError(
+                f"模型导入失败，无法安全生成迁移（共 {len(failed)} 个）：\n{details}\n"
+                "请修复导入错误；若确认可忽略，设置 ALEMBIC_ALLOW_MODEL_IMPORT_ERRORS=true"
+            )
+
     return Base.metadata
 
 
-# 获取目标元数据
+# 目标元数据
 target_metadata = import_all_models()
 
 
-def run_migrations_offline() -> None:
-    """离线模式运行迁移
-    
-    离线模式生成 SQL 脚本而不直接连接数据库。
-    通常用于 DBA 审核或无法直接连接数据库的场景。
+def _configure_context(**kwargs) -> None:
+    """统一的 context.configure 参数
+
+    参数说明：
+    - compare_type：字段类型变化也纳入自动检测（默认只在 Alembic 1.12+ 开启）
+    - render_as_batch：SQLite 不支持 ALTER COLUMN，用 batch 模式重建表，
+      否则后续给已有表改字段会直接报 "near ALTER: syntax error"
     """
-    url = config.get_main_option("sqlalchemy.url")
     context.configure(
-        url=url,
         target_metadata=target_metadata,
+        compare_type=True,
+        **kwargs,
+    )
+
+
+def run_migrations_offline() -> None:
+    """离线模式：只生成 SQL，不连接数据库（供 DBA 审核）"""
+    _configure_context(
+        url=config.get_main_option("sqlalchemy.url"),
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
     )
@@ -115,11 +142,7 @@ def run_migrations_offline() -> None:
 
 
 def run_migrations_online() -> None:
-    """在线模式运行迁移
-    
-    在线模式直接连接数据库并执行迁移操作。
-    这是最常用的迁移模式，适用于开发和生产环境。
-    """
+    """在线模式：连接数据库并执行迁移"""
     connectable = engine_from_config(
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",
@@ -127,16 +150,15 @@ def run_migrations_online() -> None:
     )
 
     with connectable.connect() as connection:
-        context.configure(
+        _configure_context(
             connection=connection,
-            target_metadata=target_metadata,
+            render_as_batch=connection.dialect.name == "sqlite",
         )
 
         with context.begin_transaction():
             context.run_migrations()
 
 
-# 判断 Alembic 运行模式
 if context.is_offline_mode():
     run_migrations_offline()
 else:

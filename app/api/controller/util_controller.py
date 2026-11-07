@@ -45,6 +45,18 @@ from utils.excel import ExcelUtil
 from utils.file import FileUtil, IMAGE_EXTENSIONS, DOCUMENT_EXTENSIONS
 
 
+def _resolve_upload_path(file_path: str) -> Path:
+    """解析并校验上传文件路径。
+
+    客户端只允许访问上传根目录内的文件，越界或非法路径统一返回 403，
+    避免通过绝对路径读取任意文件。
+    """
+    try:
+        return FileUtil.resolve_upload_path(file_path)
+    except ValueError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+
 class UtilController(BaseController):
     """工具类示例控制器 - 演示 Excel 和文件操作
     
@@ -150,11 +162,17 @@ class UtilController(BaseController):
                   -o output.xlsx
             """
             # 模拟导出数据（实际使用时从数据库查询）
-            headers = ["ID", "姓名", "邮箱", "年龄", "状态"]
+            headers = {
+                "id": "ID",
+                "name": "姓名",
+                "email": "邮箱",
+                "age": "年龄",
+                "status": "状态",
+            }
             data = [
-                [1, "张三", "zhangsan@example.com", 28, "启用"],
-                [2, "李四", "lisi@example.com", 32, "启用"],
-                [3, "王五", "wangwu@example.com", 25, "禁用"],
+                {"id": 1, "name": "张三", "email": "zhangsan@example.com", "age": 28, "status": "启用"},
+                {"id": 2, "name": "李四", "email": "lisi@example.com", "age": 32, "status": "启用"},
+                {"id": 3, "name": "王五", "email": "wangwu@example.com", "age": 25, "status": "禁用"},
             ]
             
             # 创建 Excel 下载响应
@@ -235,7 +253,10 @@ class UtilController(BaseController):
                   -F "files=@photo2.jpg" \
                   -F "files=@photo3.jpg"
             """
-            results = await FileUtil.upload_multiple(files, category=category)
+            try:
+                results = await FileUtil.upload_multiple(files, category=category)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
             
             success_count = sum(1 for r in results if "error" not in r)
             
@@ -297,9 +318,7 @@ class UtilController(BaseController):
                 FileResponse: 文件预览响应
             """
             try:
-                full_path = Path(file_path)
-                if not full_path.is_absolute():
-                    full_path = Path(__file__).parent.parent.parent.parent / file_path
+                full_path = _resolve_upload_path(file_path)
                 
                 return FileUtil.create_download_response(full_path, inline=True)
             except FileNotFoundError as e:
@@ -322,9 +341,7 @@ class UtilController(BaseController):
             Returns:
                 Dict: 文件信息，包含大小、类型、创建时间等
             """
-            full_path = Path(file_path)
-            if not full_path.is_absolute():
-                full_path = Path(__file__).parent.parent.parent.parent / file_path
+            full_path = _resolve_upload_path(file_path)
             
             info = FileUtil.get_file_info(full_path)
             
@@ -349,9 +366,7 @@ class UtilController(BaseController):
             使用示例：
                 curl -X DELETE http://localhost:8000/api/util/file/delete?file_path=uploads/images/test.jpg
             """
-            full_path = Path(file_path)
-            if not full_path.is_absolute():
-                full_path = Path(__file__).parent.parent.parent.parent / file_path
+            full_path = _resolve_upload_path(file_path)
             
             if not full_path.exists():
                 raise HTTPException(status_code=404, detail="文件不存在")

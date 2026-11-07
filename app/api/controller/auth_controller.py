@@ -30,9 +30,21 @@ from fastapi import Depends, Request
 
 from core.base_controller import BaseController
 from app.common.controller.base_auth_controller import BaseAuthController
-from helpers.auth import skip_auth, require_auth, CurrentUser
+from helpers.auth import (
+    CurrentUser,
+    blacklist_token,
+    get_token_from_header,
+    refresh_access_token,
+    require_auth,
+    skip_auth,
+)
+from config.auth import TOKEN_BLACKLIST_ENABLED
+from config.permissions import DEFAULT_ROLE, get_role_permissions
+from helpers.validate import is_email
 from app.common.service.auth_service import AuthService
 from core.database import get_db
+from core.error_codes import ErrorCode
+from core.token_state import bump_token_version
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.common.model.user_model import User
@@ -52,13 +64,18 @@ class RegisterRequest(BaseModel):
     """注册请求体"""
     username: str = Field(..., description="用户名", min_length=2, max_length=50)
     password: str = Field(..., description="密码", min_length=6, max_length=100)
-    email: Optional[str] = Field(None, description="邮箱地址")
+    email: str = Field(..., description="邮箱地址", min_length=5, max_length=100)
 
 
 class ChangePasswordRequest(BaseModel):
     """修改密码请求体"""
     old_password: str = Field(..., description="原密码", min_length=1)
     new_password: str = Field(..., description="新密码", min_length=6, max_length=100)
+
+
+class RefreshTokenRequest(BaseModel):
+    """刷新 Token 请求体"""
+    refresh_token: str = Field(..., description="登录时下发的 refresh_token", min_length=10)
 
 
 class UpdateProfileRequest(BaseModel):
@@ -129,17 +146,78 @@ class AuthController(BaseAuthController):
             result = await auth_service.login(data.username, data.password)
             
             if not result:
-                return self.error(message="用户名或密码错误", code=401)
+                # 1006 表示凭证错误；连续失败被锁定时由服务层抛出 423
+                return self.error(message="用户名或密码错误", code=ErrorCode.INVALID_CREDENTIALS)
             
             return self.success(
                 data={
-                    "token": result["token"],
+                    # access_token 用于业务接口；refresh_token 用于免登录续期
+                    "token": result["token"],              # 兼容旧字段名
+                    "access_token": result["access_token"],
+                    "refresh_token": result["refresh_token"],
+                    "token_type": result["token_type"],
+                    "expires_in": result["expires_in"],
                     "user_id": result["user"].id,
                     "username": result["user"].username,
                 },
                 message="登录成功",
             )
         
+        @self.router.post("/auth/refresh", summary="刷新访问令牌", response_model=dict)
+        @skip_auth
+        async def refresh_token(data: RefreshTokenRequest):
+            """用 refresh_token 换取新的 access_token
+
+            客户端在 access_token 过期（错误码 1004）时调用，用户无需重新登录。
+            启用轮换（JWT_REFRESH_TOKEN_ROTATE=true）时，旧的 refresh_token
+            会立即失效，客户端必须用响应里的新值替换本地存储。
+            """
+            try:
+                tokens = await refresh_access_token(data.refresh_token)
+            except ValueError as exc:
+                return self.error(
+                    message=str(exc) or "Refresh Token 无效，请重新登录",
+                    code=ErrorCode.REFRESH_TOKEN_INVALID,
+                )
+
+            return self.success(data=tokens, message="刷新成功")
+
+        @self.router.post("/auth/logout", summary="退出登录", response_model=dict)
+        async def logout(request: Request):
+            """退出登录
+
+            启用 TOKEN_BLACKLIST_ENABLED 时，当前 access_token 会进入黑名单，
+            在自然过期前无法再次使用；未启用时客户端只需删除本地 Token。
+            无论是否启用，接口都返回成功，客户端可据此清理本地状态。
+            """
+            token = get_token_from_header(request.headers.get("Authorization"))
+            if token and TOKEN_BLACKLIST_ENABLED:
+                await blacklist_token(token)
+
+            return self.success(
+                message="已退出登录",
+                data={"blacklisted": bool(token and TOKEN_BLACKLIST_ENABLED)},
+            )
+
+        @self.router.get("/auth/permissions", summary="获取当前用户权限", response_model=dict)
+        async def get_my_permissions(request: Request):
+            """返回当前登录用户的角色与权限清单
+
+            客户端可据此控制按钮/菜单的可见性，避免"点了才报 403"。
+            权限映射的权威定义在 `config/permissions.py`。
+            """
+            user = self.get_current_user(request)
+            if not user:
+                return self.error(message="未登录", code=ErrorCode.TOKEN_MISSING)
+
+            role = (user.payload or {}).get("role") or DEFAULT_ROLE
+            return self.success(
+                data={
+                    "role": role,
+                    "permissions": sorted(get_role_permissions(role)),
+                }
+            )
+
         @self.router.post("/auth/register", summary="用户注册", response_model=dict)
         @skip_auth
         async def register(
@@ -151,13 +229,17 @@ class AuthController(BaseAuthController):
             创建新用户账号，注册成功后返回用户信息。
             此接口在 SKIP_AUTH_ROUTES 中配置为免验证，无需任何装饰器。
             """
-            # 检查用户名是否已存在
-            stmt = select(User).where(User.username == data.username)
+            # 邮箱格式校验：注册契约要求 email 必填且格式合法
+            if not is_email(data.email):
+                return self.error(message="邮箱格式不正确", code=400)
+
+            # 用户名与邮箱都需唯一，一次查询同时判断
+            stmt = select(User).where(
+                (User.username == data.username) | (User.email == data.email)
+            )
             result = await db.execute(stmt)
-            existing_user = result.scalar_one_or_none()
-            
-            if existing_user:
-                return self.error(message="用户名已存在", code=400)
+            if result.scalars().first():
+                return self.error(message="用户名或邮箱已被注册", code=409)
             
             # 创建新用户
             auth_service = AuthService(db)
@@ -168,7 +250,8 @@ class AuthController(BaseAuthController):
                 status=1,
             )
             db.add(new_user)
-            await db.commit()
+            # 事务由 get_db 统一提交；此处仅 flush 以获得自增主键
+            await db.flush()
             await db.refresh(new_user)
             
             return self.success(
@@ -278,7 +361,8 @@ class AuthController(BaseAuthController):
             if data.nickname is not None:
                 db_user.nickname = data.nickname
             
-            await db.commit()
+            # 事务由 get_db 统一提交
+            await db.flush()
             await db.refresh(db_user)
             
             return self.success(
@@ -318,10 +402,14 @@ class AuthController(BaseAuthController):
             # 验证原密码
             auth_service = AuthService(db)
             if not auth_service._verify_password(data.old_password, db_user.password):
-                return self.error(message="原密码不正确", code=400)
+                return self.error(message="原密码不正确", code=ErrorCode.PASSWORD_MISMATCH)
             
-            # 更新密码
+            # 更新密码（事务由 get_db 统一提交）
             db_user.password = auth_service.hash_password(data.new_password)
-            await db.commit()
+
+            # 递增 token 版本：该用户所有已签发 Token 立即失效（包括当前这个），
+            # 防止密码泄露后旧 Token 在有效期内继续被使用
+            await bump_token_version(db, db_user.id)
+            await db.flush()
             
-            return self.success(message="密码修改成功")
+            return self.success(message="密码修改成功，请重新登录")

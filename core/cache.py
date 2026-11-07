@@ -220,7 +220,6 @@ async def init_cache():
     根据 config/cache.py 中的配置创建对应的缓存客户端：
     - redis: 创建 Redis 异步连接池
     - memory: 创建 MemoryCache 实例
-    - memcached: 暂不支持，会抛出 NotImplementedError
     
     如果 CACHE_CONFIG["enabled"] 为 False，则不初始化任何缓存客户端。
     
@@ -266,11 +265,11 @@ async def init_cache():
             max_size=mem_cfg["max_size"],
             ttl=mem_cfg["ttl"],
         )
-    elif cache_type == "memcached":
-        # Memcached 支持尚未实现
-        raise NotImplementedError("Memcached support coming soon")
     else:
-        raise ValueError(f"Unsupported cache type: {cache_type}")
+        # 明确列出可用取值，避免拼写错误导致启动失败却看不出原因
+        raise ValueError(
+            f"不支持的缓存类型: {cache_type!r}，可选值: 'memory'、'redis'"
+        )
 
 
 async def close_cache():
@@ -285,8 +284,15 @@ async def close_cache():
         await close_cache()
     """
     global cache_client
-    if cache_client and hasattr(cache_client, "close"):
-        await cache_client.close()
+    if cache_client is None:
+        return
+
+    # redis-py 5.x 起 close() 被 aclose() 取代，优先用新接口避免弃用告警
+    for method_name in ("aclose", "close"):
+        method = getattr(cache_client, method_name, None)
+        if method is not None:
+            await method()
+            break
 
 
 async def get_cache(key: str) -> Optional[Any]:

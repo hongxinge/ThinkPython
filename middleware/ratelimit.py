@@ -46,6 +46,9 @@ from fastapi import Request, Response
 from fastapi.responses import JSONResponse
 from loguru import logger
 
+from core.exception import error_payload
+from helpers.net import get_client_ip
+
 # 尝试从配置中读取限流配置
 try:
     from config.ratelimit import (
@@ -125,8 +128,8 @@ class MemoryRateLimiter:
     def __init__(self):
         self.buckets: Dict[str, TokenBucket] = {}
     
-    def is_allowed(self, key: str, rate: float, capacity: int) -> bool:
-        """检查是否允许请求
+    async def is_allowed(self, key: str, rate: float, capacity: int) -> bool:
+        """检查是否允许请求（与 Redis 限流器保持同一异步接口）
         
         Args:
             key: 限流 key（如 "ip:127.0.0.1"）
@@ -318,7 +321,9 @@ class RateLimitMiddleware:
             self.init_limiter()
         
         # 获取请求信息
-        client_ip = request.client.host if request.client else "unknown"
+        # 通过 helpers.net 统一解析：部署在 Nginx 后时能拿到真实客户端 IP，
+        # 否则所有用户会共用一个限流桶（等于全站被一起限流）
+        client_ip = get_client_ip(request)
         path = request.url.path
         method = request.method
         
@@ -327,14 +332,14 @@ class RateLimitMiddleware:
             rule = self.rules["global"]
             rate = rule["requests"] / rule["period"]
             if not await self._check(f"global", rate, rule["requests"]):
-                return self._rate_limit_response("系统繁忙，请稍后再试")
+                return self._rate_limit_response("系统繁忙，请稍后再试", rule)
         
         # 2. 检查 IP 限流
         if "ip" in self.rules:
             rule = self.rules["ip"]
             rate = rule["requests"] / rule["period"]
             if not await self._check(f"ip:{client_ip}", rate, rule["requests"]):
-                return self._rate_limit_response(f"IP {client_ip} 请求过于频繁")
+                return self._rate_limit_response(f"IP {client_ip} 请求过于频繁", rule)
         
         # 3. 检查路由限流（按路径匹配）
         for rule_name, rule in self.rules.items():
@@ -347,13 +352,17 @@ class RateLimitMiddleware:
                     rate = rule["requests"] / rule["period"]
                     key = f"route:{rule_name}:{client_ip}"
                     if not await self._check(key, rate, rule["requests"]):
-                        return self._rate_limit_response(f"接口 {path} 请求过于频繁")
+                        return self._rate_limit_response(f"接口 {path} 请求过于频繁", rule)
         
         # 所有限流检查通过，继续处理请求
         response = await call_next(request)
         
-        # 添加限流响应头
-        response.headers["X-RateLimit-Limit"] = str(self.rules.get("ip", {}).get("requests", "unknown"))
+        # 添加限流响应头：告知客户端当前 IP 窗口容量，便于其主动退避
+        ip_rule = self.rules.get("ip", {})
+        if ip_rule.get("requests") is not None:
+            response.headers["X-RateLimit-Limit"] = str(ip_rule["requests"])
+        if ip_rule.get("period") is not None:
+            response.headers["X-RateLimit-Period"] = str(ip_rule["period"])
         
         return response
     
@@ -372,39 +381,97 @@ class RateLimitMiddleware:
     
     def _path_matches(self, path: str, patterns: list) -> bool:
         """检查路径是否匹配限流规则
-        
+
+        支持三种写法（按优先级匹配）：
+            1. 精确匹配：``/auth/login`` 命中 ``/auth/login``
+            2. 末尾通配：``/api/*`` 命中 ``/api/anything``
+            3. 路径段后缀匹配：``/auth/login`` 命中 ``/api/auth/login``、
+               ``/admin/auth/login``
+
+        第 3 条是必需的：多模块模式下真实路径带模块前缀（``/api/auth/login``），
+        若只做精确匹配，登录/注册限流规则永远不会命中，暴力破解防护形同虚设。
+
         Args:
             path: 请求路径
             patterns: 限流路径模式列表
-            
+
         Returns:
             bool: 匹配返回 True
         """
-        for pattern in patterns:
-            if path == pattern or path.startswith(pattern.rstrip("*")):
+        if not path:
+            return False
+
+        normalized_path = path.rstrip("/") or "/"
+
+        for pattern in patterns or []:
+            if not pattern:
+                continue
+
+            candidate = pattern.strip()
+            if not candidate:
+                continue
+
+            # 末尾通配，如 /api/*
+            if candidate.endswith("*"):
+                prefix = candidate[:-1].rstrip("/")
+                if not prefix or normalized_path == prefix or normalized_path.startswith(prefix + "/"):
+                    return True
+                continue
+
+            candidate = candidate.rstrip("/") or "/"
+
+            # 精确匹配
+            if normalized_path == candidate:
                 return True
+
+            # 目录前缀匹配（带路径段边界）
+            if normalized_path.startswith(candidate + "/"):
+                return True
+
+            # 路径段后缀匹配：忽略模块前缀与全局路由前缀
+            if normalized_path.endswith(candidate):
+                # 模式本身以 "/" 开头时，末尾命中即等价于路径段边界命中，
+                # 例如 "/api/auth/login" 命中 "/auth/login" 是安全的；
+                # 模式不带前导 "/" 时才需要检查前一个字符是否为分隔符。
+                if candidate.startswith("/") or len(normalized_path) == len(candidate):
+                    return True
+                boundary_index = len(normalized_path) - len(candidate) - 1
+                if boundary_index < 0 or normalized_path[boundary_index] == "/":
+                    return True
+
         return False
     
-    def _rate_limit_response(self, message: str) -> JSONResponse:
+    def _rate_limit_response(self, message: str, rule: Optional[Dict[str, Any]] = None) -> JSONResponse:
         """生成限流响应
-        
+
+        客户端契约：
+        - HTTP 429 + ``code=429``；
+        - ``Retry-After`` 告诉客户端多久后可以重试（秒），避免立即重试放大压力；
+        - ``X-RateLimit-Limit`` 为该规则的窗口容量，便于客户端做退避策略；
+        - body 带 ``request_id``，与服务端日志对齐。
+
         Args:
             message: 提示信息
-            
+            rule: 命中的限流规则（含 requests / period）
+
         Returns:
             JSONResponse: 429 响应
         """
+        rule = rule or {}
+        period = int(rule.get("period", 60) or 60)
+        limit = rule.get("requests")
+
+        headers = {
+            "Retry-After": str(period),
+            "X-RateLimit-Period": str(period),
+        }
+        if limit is not None:
+            headers["X-RateLimit-Limit"] = str(limit)
+
         return JSONResponse(
             status_code=429,
-            content={
-                "code": 429,
-                "message": message,
-                "data": None,
-            },
-            headers={
-                "Retry-After": "60",  # 建议客户端 60 秒后重试
-                "X-RateLimit-Limit": "limit reached",
-            }
+            content=error_payload(429, message, {"retry_after": period}),
+            headers=headers,
         )
 
 

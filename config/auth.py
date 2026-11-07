@@ -92,9 +92,47 @@ TOKEN_BLACKLIST_PREFIX = "token:blacklist:"
 # ==============================
 # 登录安全策略
 # ==============================
-
-# 登录失败最大尝试次数（超过后锁定账号）
+# 登录失败计数：同一账号连续失败达到阈值后临时锁定（防止密码暴力破解）
+# 计数存放在缓存中（Memory 单机 / Redis 分布式），不落库、不增加写压力
 LOGIN_MAX_ATTEMPTS = int(os.getenv("LOGIN_MAX_ATTEMPTS", "5"))
 
 # 账号锁定时长（分钟）
 LOGIN_LOCK_DURATION = int(os.getenv("LOGIN_LOCK_DURATION", "30"))
+
+# ==============================
+# Token 版本校验（改密/禁用后旧 Token 立即失效）
+# ==============================
+# True  - 校验 payload.ver 与用户表 token_version 是否一致（推荐，安全）
+# False - 跳过校验，回到纯无状态 JWT（零额外查询，最高性能）
+TOKEN_VERSION_CHECK = os.getenv("TOKEN_VERSION_CHECK", "true").lower() == "true"
+
+# 版本号缓存时长（秒）。0 表示不缓存、每次查库（最严格）；
+# 数值越大数据库压力越小，但改密后旧 Token 的可乘之机会相应变长。
+TOKEN_VERSION_CACHE_TTL = int(os.getenv("TOKEN_VERSION_CACHE_TTL", "60"))
+
+
+def validate_secret_config(using_default: bool, debug: bool) -> bool:
+    """校验 JWT 密钥配置是否可用于当前运行模式。
+
+    Args:
+        using_default: 是否正在使用框架内置的默认密钥
+        debug: 是否处于调试模式
+
+    Returns:
+        bool: 是否需要向调用方输出告警（仅「debug + 默认密钥」时为 True）
+
+    Raises:
+        RuntimeError: 生产环境仍使用默认密钥，必须拒绝启动
+    """
+    if not using_default:
+        return False
+
+    message = (
+        "检测到使用默认 JWT_SECRET，存在严重安全风险！\n"
+        "   请生成强随机密钥并写入 .env：\n"
+        "   python -c \"import secrets; print('JWT_SECRET=' + secrets.token_hex(32))\""
+    )
+
+    if debug:
+        return True
+    raise RuntimeError(message)

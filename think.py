@@ -25,6 +25,7 @@ ThinkPython CLI 命令行工具
     python think.py db-migrate                    # 执行数据库迁移
     python think.py list-routes                   # 列出所有路由
 """
+import re
 import sys
 import argparse
 import asyncio
@@ -88,8 +89,8 @@ class RunCommand(Command):
         # 从命令行参数或配置中获取服务器设置
         host = getattr(args, "host", "0.0.0.0")
         port = getattr(args, "port", 8000)
-        # 如果传入了 --no-reload 则关闭热重载，否则根据 debug 配置决定
-        reload = getattr(args, "reload", APP_CONFIG["debug"])
+        # --no-reload 优先；未指定时跟随 debug 配置
+        reload = APP_CONFIG["debug"] and not getattr(args, "no_reload", False)
         
         print(f"🚀 {APP_CONFIG['name']} v{APP_CONFIG['version']} 启动中...")
         print(f"📍 地址: http://{host}:{port}")
@@ -307,14 +308,17 @@ class MakeServiceCommand(Command):
 from typing import Optional, Dict, Any, List
 from sqlalchemy.ext.asyncio import AsyncSession
 from core.base_service import BaseService
+from app.{module}.model.{name.lower()}_model import {name}
 
 
 class {name}Service(BaseService):
     """{name}服务"""
-    
+
+    # BaseService 的 CRUD 方法依赖该属性
+    model_class = {name}
+
     def __init__(self, db: AsyncSession):
         super().__init__(db)
-        # self.model_class = {name}  # 关联到{name}模型
     
     async def get_list(self, page: int = 1, page_size: int = 10) -> tuple:
         """获取列表"""
@@ -830,9 +834,24 @@ class MakeModuleCommand(Command):
         if env_file.exists():
             content = env_file.read_text(encoding="utf-8")
             if "ENABLED_MODULES" in content:
-                content = content.replace(
-                    "ENABLED_MODULES=",
-                    f"ENABLED_MODULES={name},"
+                def _append_module(match):
+                    """把新模块加入白名单；自动发现模式（* 或空）保持不变。"""
+                    current = match.group(1).strip()
+                    if current in ("", "*"):
+                        return match.group(0)
+
+                    modules = [m.strip() for m in current.split(",") if m.strip()]
+                    if name in modules:
+                        return match.group(0)
+
+                    modules.append(name)
+                    return "ENABLED_MODULES=" + ",".join(modules)
+
+                content = re.sub(
+                    r"^ENABLED_MODULES=(.*)$",
+                    _append_module,
+                    content,
+                    flags=re.MULTILINE,
                 )
                 env_file.write_text(content, encoding="utf-8")
         
@@ -931,6 +950,8 @@ class DBMigrateCommand(Command):
             asyncio.run(run_migration())
         except Exception as e:
             print(f"❌ 数据库迁移失败: {e}")
+            # 迁移失败必须以非零退出码结束，否则 CI / 部署脚本会把失败当成成功
+            raise SystemExit(1) from e
     
     def _run_alembic(self, args: argparse.Namespace):
         """Alembic 模式：使用 Alembic 进行版本化迁移"""
@@ -959,6 +980,7 @@ class DBMigrateCommand(Command):
                 print("💡 下一步: python think.py db-migrate --upgrade")
             except Exception as e:
                 print(f"❌ 生成迁移脚本失败: {e}")
+                raise SystemExit(1) from e
         
         elif getattr(args, "upgrade", False):
             # 执行迁移（升级到最新版本）
@@ -968,6 +990,7 @@ class DBMigrateCommand(Command):
                 print("✅ 数据库迁移完成（Alembic 模式）")
             except Exception as e:
                 print(f"❌ 数据库迁移失败: {e}")
+                raise SystemExit(1) from e
         
         elif getattr(args, "downgrade", False):
             # 回滚上一次迁移
@@ -977,6 +1000,7 @@ class DBMigrateCommand(Command):
                 print("✅ 数据库回滚成功")
             except Exception as e:
                 print(f"❌ 数据库回滚失败: {e}")
+                raise SystemExit(1) from e
         
         elif getattr(args, "history", False):
             # 查看迁移历史
@@ -986,6 +1010,7 @@ class DBMigrateCommand(Command):
                 alembic_command.history(alembic_cfg)
             except Exception as e:
                 print(f"❌ 查看历史失败: {e}")
+                raise SystemExit(1) from e
         
         elif getattr(args, "current", False):
             # 查看当前数据库版本
@@ -995,6 +1020,7 @@ class DBMigrateCommand(Command):
                 alembic_command.current(alembic_cfg)
             except Exception as e:
                 print(f"❌ 查看版本失败: {e}")
+                raise SystemExit(1) from e
 
 
 class ListRoutesCommand(Command):

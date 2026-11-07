@@ -155,6 +155,10 @@ def paginate(items: List[Any], page: int = 1, page_size: int = 10) -> Dict:
         # result["total_pages"] = 10
     """
     total = len(items)
+    # 防御非法分页参数：page_size <= 0 会导致除零或切片异常
+    page = max(1, page or 1)
+    page_size = max(1, page_size or 1)
+
     start = (page - 1) * page_size
     end = start + page_size
     return {

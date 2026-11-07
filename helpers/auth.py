@@ -167,7 +167,41 @@ async def is_token_blacklisted(token: str) -> bool:
         return False
 
 
-def create_token(user_id: int, extra_data: Optional[Dict] = None) -> str:
+async def is_token_revoked(token: str) -> bool:
+    """检查 Token 是否已被吊销（不判断全局黑名单开关）
+
+    与 :func:`is_token_blacklisted` 的区别：
+    - ``is_token_blacklisted`` 服务于「登出」场景，受 ``TOKEN_BLACKLIST_ENABLED``
+      开关控制，未启用时直接放行；
+    - 本函数用于「刷新令牌轮换」：旧 refresh token 换出新令牌后**必须**立即失效，
+      这是轮换语义本身的要求，不应依赖全局开关。
+
+    Args:
+        token: 待检查的 JWT Token
+
+    Returns:
+        bool: 已吊销返回 True；无法解析或未吊销返回 False
+    """
+    try:
+        payload = jwt.decode(
+            token, JWT_SECRET, algorithms=[JWT_ALGORITHM], options={"verify_exp": False}
+        )
+        jti = payload.get("jti")
+        if not jti:
+            return False
+
+        from core.cache import get_cache
+
+        return await get_cache(f"{TOKEN_BLACKLIST_PREFIX}{jti}") is not None
+    except Exception:  # noqa: BLE001 - 解析失败按"未吊销"处理，由调用方再校验签名
+        return False
+
+
+def create_token(
+    user_id: int,
+    extra_data: Optional[Dict] = None,
+    token_version: Optional[int] = None,
+) -> str:
     """创建 Access Token（访问令牌）
     
     将用户 ID 和附加信息编码为 JWT Access Token，包含过期时间、签发时间和唯一标识。
@@ -177,6 +211,9 @@ def create_token(user_id: int, extra_data: Optional[Dict] = None) -> str:
     Args:
         user_id: 用户的唯一标识 ID
         extra_data: 需要额外存储在 Token 中的数据（如角色、权限等）
+        token_version: 用户当前的 token 版本号（user.token_version）。
+            写入 payload 的 ``ver`` 字段，服务端校验时对比数据库值，
+            改密/禁用后旧 Token 立即失效。不传则不写该字段（兼容无状态模式）。
         
     Returns:
         str: JWT Access Token 字符串，可直接返回给客户端
@@ -186,6 +223,7 @@ def create_token(user_id: int, extra_data: Optional[Dict] = None) -> str:
             "user_id": 1,              # 用户 ID
             "type": "access",          # Token 类型
             "jti": "abc123...",        # 唯一标识
+            "ver": 0,                  # 用户 token 版本号
             "exp": 2024-01-02T12:00:00, # 过期时间
             "iat": 2024-01-01T12:00:00, # 签发时间
             "role": "admin"            # 附加数据（可选）
@@ -208,6 +246,8 @@ def create_token(user_id: int, extra_data: Optional[Dict] = None) -> str:
         "exp": now + timedelta(hours=JWT_ACCESS_TOKEN_EXPIRE_HOURS),  # 过期时间（UTC）
         "iat": now,  # 签发时间（UTC）
     }
+    if token_version is not None:
+        payload["ver"] = int(token_version)
     # 合并额外数据到 payload 中
     if extra_data:
         payload.update(extra_data)
@@ -215,7 +255,11 @@ def create_token(user_id: int, extra_data: Optional[Dict] = None) -> str:
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
 
 
-def create_refresh_token(user_id: int, extra_data: Optional[Dict] = None) -> str:
+def create_refresh_token(
+    user_id: int,
+    extra_data: Optional[Dict] = None,
+    token_version: Optional[int] = None,
+) -> str:
     """创建 Refresh Token（刷新令牌）
     
     将用户 ID 编码为 JWT Refresh Token，包含较长的过期时间。
@@ -224,6 +268,8 @@ def create_refresh_token(user_id: int, extra_data: Optional[Dict] = None) -> str
     Args:
         user_id: 用户的唯一标识 ID
         extra_data: 需要额外存储在 Refresh Token 中的数据
+        token_version: 用户当前的 token 版本号，写入 payload 的 ``ver`` 字段；
+            刷新时原样透传，保证改密后旧 Refresh Token 也一并失效
         
     Returns:
         str: JWT Refresh Token 字符串
@@ -233,6 +279,7 @@ def create_refresh_token(user_id: int, extra_data: Optional[Dict] = None) -> str
             "user_id": 1,               # 用户 ID
             "type": "refresh",          # Token 类型
             "jti": "def456...",         # 唯一标识
+            "ver": 0,                   # 用户 token 版本号
             "exp": 2024-01-08T12:00:00,  # 过期时间（7天后）
             "iat": 2024-01-01T12:00:00,  # 签发时间
         }
@@ -250,6 +297,8 @@ def create_refresh_token(user_id: int, extra_data: Optional[Dict] = None) -> str
         "exp": now + timedelta(days=JWT_REFRESH_TOKEN_EXPIRE_DAYS),  # 过期时间（UTC）
         "iat": now,  # 签发时间（UTC）
     }
+    if token_version is not None:
+        payload["ver"] = int(token_version)
     # 合并额外数据到 payload 中
     if extra_data:
         payload.update(extra_data)
@@ -286,34 +335,42 @@ async def refresh_access_token(refresh_token: str) -> Dict[str, Any]:
             # 需要重新登录
             print(f"刷新失败: {e}")
     """
-    # 验证 Refresh Token
-    payload = decode_token(refresh_token)
+    # 验证 Refresh Token（decode_token 已强制校验 type=refresh）
+    payload = decode_token(refresh_token, expected_type="refresh")
     if not payload:
-        raise ValueError("Refresh Token 无效或已过期")
+        raise ValueError("Refresh Token 无效、已过期或类型不正确")
     
-    # 验证 Token 类型
-    if payload.get("type") != "refresh":
-        raise ValueError("无效的 Token 类型，需要 Refresh Token")
-    
-    # 检查是否在黑名单中
-    if await is_token_blacklisted(refresh_token):
-        raise ValueError("Refresh Token 已失效")
+    # 检查是否已被吊销：
+    # 1) 全局黑名单（登出场景，受 TOKEN_BLACKLIST_ENABLED 控制）
+    # 2) 轮换吊销（refresh 换新后旧凭据必须立即失效，不受开关控制）
+    if await is_token_blacklisted(refresh_token) or await is_token_revoked(refresh_token):
+        raise ValueError("Refresh Token 已失效，请重新登录")
     
     user_id = payload.get("user_id")
     if not user_id:
         raise ValueError("Token 中缺少用户信息")
+
+    # 校验 token 版本：改密 / 禁用后旧 Refresh Token 不得再换出新凭证
+    from core.token_state import is_token_version_valid
+
+    if not await is_token_version_valid(user_id, payload.get("ver")):
+        raise ValueError("登录状态已失效，请重新登录")
     
+    # 版本号原样透传：改密后旧 Refresh Token 携带的 ver 已过期，
+    # 服务端校验时会拒绝，不会靠刷新"复活"旧凭证
+    token_version = payload.get("ver")
+
     # 生成新的 Access Token
-    new_access_token = create_token(user_id)
+    new_access_token = create_token(user_id, token_version=token_version)
     
     # 如果启用了轮换机制，生成新的 Refresh Token
     new_refresh_token = None
     if JWT_REFRESH_TOKEN_ROTATE:
-        # 将旧的 Refresh Token 加入黑名单
-        if TOKEN_BLACKLIST_ENABLED:
-            await blacklist_token(refresh_token)
+        # 旧 Refresh Token 必须立即作废，否则"轮换"形同虚设。
+        # force=True：不受 TOKEN_BLACKLIST_ENABLED 控制——轮换是刷新流程自身的语义。
+        await blacklist_token(refresh_token, force=True)
         # 生成新的 Refresh Token
-        new_refresh_token = create_refresh_token(user_id)
+        new_refresh_token = create_refresh_token(user_id, token_version=token_version)
     else:
         # 不轮换，返回原 Refresh Token
         new_refresh_token = refresh_token
@@ -326,7 +383,11 @@ async def refresh_access_token(refresh_token: str) -> Dict[str, Any]:
     }
 
 
-async def blacklist_token(token: str, expire_seconds: Optional[int] = None) -> None:
+async def blacklist_token(
+    token: str,
+    expire_seconds: Optional[int] = None,
+    force: bool = False,
+) -> None:
     """将 Token 加入黑名单（用于主动注销，异步）
     
     用户登出时调用，将 Token 的 JTI 加入缓存黑名单（Redis/Memory），
@@ -335,6 +396,9 @@ async def blacklist_token(token: str, expire_seconds: Optional[int] = None) -> N
     Args:
         token: 要加入黑名单的 JWT Token
         expire_seconds: 黑名单有效期（秒），默认等于 Token 剩余有效期
+        force: 忽略 TOKEN_BLACKLIST_ENABLED 开关，强制执行（刷新轮换场景使用）。
+            「换新令牌后旧令牌必须失效」是轮换语义本身的要求，不能因为
+            全局登出黑名单未启用而失效。
         
     使用示例:
         # 用户登出
@@ -345,7 +409,7 @@ async def blacklist_token(token: str, expire_seconds: Optional[int] = None) -> N
                 await blacklist_token(token)
             return {"message": "已退出登录"}
     """
-    if not TOKEN_BLACKLIST_ENABLED:
+    if not TOKEN_BLACKLIST_ENABLED and not force:
         return
     
     try:
@@ -376,15 +440,69 @@ async def blacklist_token(token: str, expire_seconds: Optional[int] = None) -> N
         pass  # 忽略黑名单添加失败
 
 
-def decode_token(token: str, verify_exp: bool = True) -> Optional[Dict[str, Any]]:
+def decode_token_detail(
+    token: str,
+    verify_exp: bool = True,
+    expected_type: Optional[str] = "access",
+) -> tuple:
+    """解析 Token 并区分失败原因（客户端需要据此决定动作）
+
+    返回 ``(payload, error_code)``：
+    - 成功：``(payload, None)``
+    - 失败：``(None, ErrorCode.TOKEN_EXPIRED)`` 或 ``(None, ErrorCode.TOKEN_INVALID)``
+
+    为什么区分「过期」与「无效」：
+    过期时客户端应调用刷新接口续期；签名错误或类型不符时必须重新登录。
+    两者都返回 401，若业务码相同，客户端只能弹登录框，体验会明显变差。
+
+    Args:
+        token: JWT Token 字符串
+        verify_exp: 是否校验过期时间
+        expected_type: 期望的 Token 类型，None 表示不校验
+
+    Returns:
+        tuple: (payload, error_code)，二者必有一个为 None
+    """
+    from core.error_codes import ErrorCode
+
+    if not token:
+        return None, ErrorCode.TOKEN_INVALID
+
+    try:
+        payload = jwt.decode(
+            token,
+            JWT_SECRET,
+            algorithms=[JWT_ALGORITHM],
+            options={"verify_exp": verify_exp},
+        )
+    except jwt.ExpiredSignatureError:
+        return None, ErrorCode.TOKEN_EXPIRED
+    except jwt.InvalidTokenError:
+        return None, ErrorCode.TOKEN_INVALID
+
+    if expected_type is not None and payload.get("type") != expected_type:
+        # refresh token 当 access token 用，同样视为无效凭证
+        return None, ErrorCode.TOKEN_INVALID
+
+    return payload, None
+
+
+def decode_token(
+    token: str,
+    verify_exp: bool = True,
+    expected_type: Optional[str] = "access",
+) -> Optional[Dict[str, Any]]:
     """解析并验证 JWT Token
     
-    验证 Token 的签名和过期时间，返回解析后的 payload 数据。
-    如果 Token 无效或已过期，返回 None。
+    验证 Token 的签名、过期时间与类型，返回解析后的 payload 数据。
+    如果 Token 无效、已过期或类型不匹配，返回 None。
+    
+    需要区分失败原因时请使用 :func:`decode_token_detail`。
     
     Args:
         token: JWT Token 字符串
         verify_exp: 是否验证过期时间（默认 True，刷新 Token 时可能需要关闭）
+        expected_type: 期望的 Token 类型（默认 "access"）；传 None 表示不校验类型
         
     Returns:
         Optional[Dict[str, Any]]: 解析后的 payload 字典，验证失败时返回 None
@@ -397,16 +515,8 @@ def decode_token(token: str, verify_exp: bool = True) -> Optional[Dict[str, Any]
             raise UnauthorizedException("登录已过期")
         user_id = payload["user_id"]
     """
-    try:
-        # decode() 会自动验证签名和过期时间
-        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM], options={"verify_exp": verify_exp})
-        return payload
-    except jwt.ExpiredSignatureError:
-        # Token 已过期
-        return None
-    except jwt.InvalidTokenError:
-        # Token 无效（签名不匹配、格式错误等）
-        return None
+    payload, _ = decode_token_detail(token, verify_exp=verify_exp, expected_type=expected_type)
+    return payload
 
 
 def get_token_from_header(authorization: Optional[str] = None) -> Optional[str]:
@@ -478,6 +588,54 @@ def skip_auth(func):
     # 标记为跳过认证（供中间件识别）
     wrapper._skip_auth = True
     return wrapper
+
+
+def require_permission(*permissions: str, mode: str = "any"):
+    """接口级权限装饰器（RBAC）
+
+    标记该接口需要的权限，由全局认证中间件在 Token 校验通过后检查。
+    权限与角色的映射见 ``config/permissions.py``。
+
+    与 ``@skip_auth`` 的关系：
+        两者是不同维度——``skip_auth`` 表示「不需要登录」，
+        ``require_permission`` 表示「需要登录且具备某权限」。
+        同一接口不应同时使用。
+
+    Args:
+        *permissions: 权限标识，如 ``"order:read"``、``"user:write"``
+        mode: ``"any"``（默认，满足任一即可）或 ``"all"``（必须全部满足）
+
+    Returns:
+        Callable: 装饰后的函数（保留原函数的 ``_required_permissions`` 标记）
+
+    使用示例:
+        class OrderController(BaseController):
+            @self.router.get("/orders")
+            @require_permission("order:read")
+            async def list_orders(self):
+                ...
+
+            @self.router.delete("/orders/{order_id}")
+            @require_permission("order:delete", mode="all")
+            async def delete_order(self, order_id: int):
+                ...
+    """
+    if mode not in ("any", "all"):
+        raise ValueError("mode 只支持 'any' 或 'all'")
+
+    normalized = tuple(p.strip() for p in permissions if p and p.strip())
+
+    def decorator(func):
+        @wraps(func)
+        async def wrapper(*args, **kwargs):
+            return await func(*args, **kwargs)
+
+        # 标记所需权限（供中间件识别）
+        wrapper._required_permissions = normalized
+        wrapper._permission_mode = mode
+        return wrapper
+
+    return decorator
 
 
 async def require_auth(

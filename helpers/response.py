@@ -103,6 +103,11 @@ def paginate_response(items: List[Any], total: int, page: int = 1, page_size: in
         #     }
         # }
     """
+    # 防御非法分页参数：page_size <= 0 会导致除零
+    page_size = max(1, page_size or 1)
+    total = max(0, total or 0)
+    total_pages = (total + page_size - 1) // page_size  # 向上取整计算总页数
+
     return {
         "code": 200,
         "message": "success",
@@ -111,7 +116,7 @@ def paginate_response(items: List[Any], total: int, page: int = 1, page_size: in
             "total": total,
             "page": page,
             "page_size": page_size,
-            "total_pages": (total + page_size - 1) // page_size,  # 向上取整计算总页数
+            "total_pages": total_pages,
         },
     }
 

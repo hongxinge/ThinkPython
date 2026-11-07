@@ -1,10 +1,9 @@
 """
 ThinkPython 缓存配置文件
 
-本文件负责配置和管理缓存连接参数，支持多种缓存后端：
+本文件负责配置和管理缓存连接参数，支持两种缓存后端：
 - Redis（生产环境推荐，支持持久化和分布式）
 - Memory（内存缓存，适合开发和测试，无需额外依赖）
-- Memcached（即将支持）
 
 配置原则：
 - 优先支持 REDIS_URL 一行配置（开发者友好）
@@ -49,7 +48,9 @@ REDIS_SOCKET_CONNECT_TIMEOUT = 5
 # 缓存全局配置
 # ==============================
 
-# 缓存类型：memory / redis / memcached
+# 缓存类型：memory / redis
+# 注意：Memcached 目前**未实现**，配置为 memcached 会在启动时直接报错。
+# 需要分布式缓存请使用 Redis（生产推荐），本地开发用 memory 即可。
 CACHE_TYPE = os.getenv("CACHE_TYPE", "memory")
 
 # 是否启用缓存
@@ -84,11 +85,6 @@ CACHE_CONFIG = {
         "decode_responses": REDIS_DECODE_RESPONSES,
         "socket_timeout": REDIS_SOCKET_TIMEOUT,
         "socket_connect_timeout": REDIS_SOCKET_CONNECT_TIMEOUT,
-    },
-    "memcached": {
-        "servers": os.getenv("MEMCACHED_SERVERS", "127.0.0.1:11211").split(","),
-        "username": os.getenv("MEMCACHED_USERNAME", None),
-        "password": os.getenv("MEMCACHED_PASSWORD", None),
     },
     "memory": {
         "max_size": MEMORY_CACHE_MAX_SIZE,

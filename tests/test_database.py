@@ -17,6 +17,8 @@ from sqlalchemy import Column, Integer, String, DateTime
 from datetime import datetime
 
 class TestModelForDB(Base):
+    # 告知 pytest 这不是测试类，避免 PytestCollectionWarning
+    __test__ = False
     __tablename__ = "test_models_db"
     id = Column(Integer, primary_key=True, autoincrement=True)
     name = Column(String(100), nullable=False)

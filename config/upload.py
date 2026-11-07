@@ -29,10 +29,12 @@ UPLOAD_CONFIG = {
     
     # 允许的文件扩展名，None 表示不限制
     # 如果需要限制，可以设置为集合：{".jpg", ".png", ".pdf"}
+    # 生产环境强烈建议设置，避免上传 .php/.jsp/.exe 等可执行或脚本文件
     "allowed_extensions": None,
     
     # 允许的 MIME 类型，None 表示不限制
     # 如果需要限制，可以设置为集合：{"image/jpeg", "image/png"}
+    # 校验在 FileUtil.validate_file 中执行，FileUtil.upload 会自动读取此项
     "allowed_mime_types": None,
     
     # 文件命名规则：

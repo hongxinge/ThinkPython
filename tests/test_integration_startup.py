@@ -36,29 +36,48 @@ class TestServerStartup:
 
 @pytest_asyncio.fixture
 async def async_client():
-    """创建异步测试客户端"""
-    from core.database import init_database, Base, engine
+    """创建异步测试客户端（内存 SQLite，不依赖 MySQL / Redis）"""
+    from core.database import init_database, Base
     import importlib
     import config.database as db_config
-    
+
     # 确保测试环境使用 SQLite 内存数据库
     os.environ["DB_TYPE"] = "sqlite"
     os.environ["DB_SQLITE_PATH"] = ":memory:"
-    
+
     # 重新加载数据库配置模块以读取新的环境变量
     importlib.reload(db_config)
-    
+
     app = create_app()
-    
+
     # 手动初始化数据库（因为 lifespan 在 ASGITransport 中不会自动触发）
     await init_database()
-    
-    # 在内存数据库中创建所有表
+
+    # 显式导入用户模型，确保 create_all 真正建出 user 表
+    from app.common.model.user_model import User
     from core.database import engine as db_engine
+
     if db_engine:
         async with db_engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
-    
+
+    # 预置测试用户：密码为 MD5("testpass")，与 AuthService 当前实现保持一致
+    from core.database import async_session
+    from helpers.common import md5
+
+    async with async_session() as session:
+        session.add(
+            User(
+                username="testuser",
+                password=md5("testpass"),
+                email="testuser@example.com",
+            )
+        )
+        try:
+            await session.commit()
+        except Exception:
+            await session.rollback()
+
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         yield client
 
@@ -85,10 +104,12 @@ class TestPublicEndpoints:
             "/api/auth/login",
             json={"username": "testuser", "password": "testpass"},
         )
-        # 登录接口应该返回响应
-        # 如果表不存在会返回 500，如果用户不存在会返回 401 或错误信息
-        # 只要不被认证中间件拦截（401）就说明免认证配置正确
-        assert response.status_code != 401  # 不是被中间件拦截的 401
+        # 预置用户存在，登录应成功并返回双 Token
+        assert response.status_code == 200, response.text
+        data = response.json()
+        assert data["code"] == 200, data
+        assert data["data"]["token"]
+        assert data["data"]["username"] == "testuser"
 
 
 # ============== 需要认证的接口测试 ==============
@@ -100,8 +121,9 @@ class TestAuthEndpoints:
     async def test_profile_requires_auth(self, async_client):
         """测试获取个人信息需要认证"""
         response = await async_client.get("/api/auth/profile")
-        # 未认证应该被拦截
-        assert response.status_code in [401, 403, 200]
+        # 未认证必须被中间件拦截，且原因是缺少 Token
+        assert response.status_code == 401
+        assert "Token" in response.json()["message"]
 
     @pytest.mark.asyncio
     async def test_register_endpoint(self, async_client):
@@ -114,14 +136,11 @@ class TestAuthEndpoints:
                 "email": "test@example.com",
             },
         )
-        # 注册接口应该在 SKIP_AUTH_ROUTES 中配置为免验证
-        # 如果表不存在会返回 500，但这不是认证问题
-        # 只要不是被中间件拦截的 401（"未提供认证 Token"）就说明免认证配置正确
+        # 注册接口免认证，且应真正写入数据库
+        assert response.status_code == 200, response.text
         data = response.json()
-        message = data.get("message", "")
-        # 排除认证中间件拦截的 401
-        if response.status_code == 401:
-            assert "Token" not in message  # 不是 Token 相关的错误
+        assert data["code"] == 200, data
+        assert data["data"]["username"] == "integration_test_user"
 
 
 # ============== Excel 工具实际使用测试 ==============

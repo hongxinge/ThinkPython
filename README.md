@@ -59,24 +59,34 @@ python think.py run
 
 | 地址 | 说明 |
 |------|------|
-| http://localhost:8000/docs | 📘 API 文档（Swagger UI） |
-| http://localhost:8000/health | 💚 健康检查 |
+| http://localhost:8000/docs | 📘 API 文档（Swagger UI，仅 debug 模式） |
+| http://localhost:8000/openapi.json | 📄 OpenAPI 规范，可导入 Apifox / Postman 生成客户端 SDK |
+| http://localhost:8000/health | 💚 存活检查（不查数据库） |
+| http://localhost:8000/health/ready | ✅ 就绪检查（校验数据库与缓存） |
 
 ---
 
 ## ⚡ 功能特性
 
+ThinkPython 是**为客户端 App / 小程序 / 前端提供 JSON API** 的后端框架，
+所有能力都围绕这一目标设计。
+
 | 功能 | 说明 |
 |------|------|
+| 📱 **客户端 API 优先** | 纯 JSON、无 Session/Cookie、Bearer Token、统一错误码，见 [客户端 API 契约](docs/api-contract.md) |
+| 🔐 **双 Token 认证** | access + refresh 双令牌，支持轮换、登出吊销、改密后旧 Token 立即失效 |
+| 🛡️ **暴力破解防护** | IP 维度限流 + 账号维度失败锁定（423），两级防护 |
+| 🎫 **接口级权限** | 角色 + 权限标识，`@require_permission` 一行声明，见 [权限控制](docs/rbac.md) |
+| ♻️ **幂等重试** | 客户端带 `Idempotency-Key`，服务端回放首次结果，弱网重试不重复下单 |
 | 🔄 **单/多模块切换** | 配置自由切换，小项目用单模块，大项目用多模块 |
 | 🗄️ **多数据库支持** | MySQL / PostgreSQL / SQLite / MSSQL 一键配置 |
-| 💾 **多缓存支持** | Redis / Memory / Memcached 灵活选择 |
-| 🛣️ **自动路由注册** | 控制器自动发现，无需手动注册 |
+| 💾 **多缓存支持** | Redis（生产）/ Memory（开发）零侵入切换 |
+| 🛣️ **自动路由注册** | 控制器自动发现，无需手动注册；支持 `/api/v1` 版本前缀 |
 | 🏗️ **三层架构** | Controller / Service / Model 清晰分层 |
-| 🔐 **智能认证** | 全局中间件 + 白名单跳过，配置一次即可 |
 | 🖥️ **CLI 工具** | 类似 ThinkPHP 的 `think` 命令，快速生成代码 |
+| 🔍 **可观测性** | request_id 贯穿日志与错误响应、慢请求告警、`/health` + `/health/ready` |
 | 📦 **Excel 工具** | 内置 Excel 导入导出，支持样式、自动列宽 |
-| 📁 **文件工具** | 内置文件上传下载，支持格式验证、UUID 命名 |
+| 📁 **文件工具** | 内置文件上传下载，支持格式验证、MIME 校验、路径越界防护 |
 
 ---
 
@@ -167,7 +177,8 @@ python think.py make-controller User # 创建控制器
 python think.py make-model User      # 创建数据模型
 python think.py make-service User    # 创建服务层
 python think.py make-module order    # 创建新模块
-python think.py db-migrate           # 数据库迁移
+python think.py db-migrate --auto -m "描述"  # 生成迁移脚本
+python think.py db-migrate --upgrade         # 应用迁移
 python think.py list-routes          # 列出所有路由
 ```
 
@@ -181,12 +192,14 @@ python think.py list-routes          # 列出所有路由
 
 | 文档 | 说明 |
 |------|------|
+| [客户端 API 契约](docs/api-contract.md) | **客户端团队必读**：错误码、双 Token、追踪、限流退避 |
 | [5分钟创建第一个 API](docs/getting-started.md) | 从零开始，创建完整的 CRUD 接口 |
 | [数据库配置](docs/database.md) | MySQL / PostgreSQL / MSSQL 配置教程 |
-| [缓存使用](docs/cache.md) | Redis / Memcached 配置教程 |
+| [缓存使用](docs/cache.md) | Redis / Memory 配置与使用教程 |
 | [多模块模式](docs/modules.md) | 项目拆分与模块管理 |
 | [公共模块](docs/common.md) | 跨模块共享代码的最佳实践 |
 | [认证机制](docs/auth.md) | JWT 认证、免验证路由配置 |
+| [权限控制](docs/rbac.md) | 接口级 RBAC：角色、权限、`@require_permission` |
 | [Excel 工具](docs/excel.md) | Excel 导入导出使用指南 |
 | [文件工具](docs/file.md) | 文件上传下载使用指南 |
 
@@ -194,19 +207,30 @@ python think.py list-routes          # 列出所有路由
 
 ## 📦 统一响应格式
 
+成功：
+
+```json
+{"code": 200, "message": "success", "data": {}}
+```
+
+失败（HTTP 状态码为真实语义值，`code` 为业务码，客户端按 `code` 判断）：
+
 ```json
 {
-  "code": 200,
-  "message": "success",
-  "data": {}
+  "code": 1004,
+  "message": "Token 已过期，请刷新或重新登录",
+  "data": null,
+  "request_id": "3f2b8c1e-..."
 }
 ```
 
 | 方法 | 说明 |
 |------|------|
 | `self.success(data, message)` | 成功响应 |
-| `self.error(message, code)` | 错误响应 |
+| `self.error(message, code, http_status=None)` | 错误响应，业务码自动映射 HTTP 状态码 |
 | `self.paginate(items, total, page, page_size)` | 分页响应 |
+
+完整的错误码表与客户端接入方式见 [客户端 API 契约](docs/api-contract.md)。
 
 ---
 
@@ -247,7 +271,7 @@ ThinkPython 支持多种部署方式，按需选择：
 |---------|---------|------|
 | Uvicorn | 小型项目 | `uvicorn main:app --host 0.0.0.0 --port 8000` |
 | Gunicorn | 中型项目 | `gunicorn -c deploy/gunicorn.conf.py main:app -k uvicorn.workers.UvicornWorker` |
-| Docker Compose | 生产环境 | `cd deploy && docker-compose up -d` |
+| Docker Compose | 生产环境 | `cd deploy && docker compose up -d --build` |
 
 完整的部署配置示例请参考 `deploy/` 目录，包含 Dockerfile、docker-compose.yml、Gunicorn 配置、Nginx 配置等。
 
@@ -267,12 +291,24 @@ ThinkPython 采用 [MIT License](LICENSE) 开源协议，完全免费，可商�
 4. 推送分支 (`git push origin feature/your-feature`)
 5. 提交 Pull Request
 
-提交前请运行测试套件，确保全部通过：
+提交前请运行测试套件：
 
 ```bash
-pip install -r requirements.txt pytest pytest-asyncio
-pytest tests/ -q
+# 在已激活的项目虚拟环境中安装运行依赖 + 测试依赖
+pip install -r requirements-dev.txt
+
+# 在项目根目录执行（无需手动设置 PYTHONPATH）
+python -m pytest tests/ -q
 ```
+
+> 使用系统 Python 直接运行会因缺少 fastapi / sqlalchemy / httpx 等包而报
+> `errors during collection`，请先创建并激活虚拟环境。
+
+测试约定：
+
+- `requirements.txt` 只含运行依赖，`requirements-dev.txt` 额外包含 pytest / pytest-asyncio / httpx。
+- `pytest.ini` + `conftest.py` 统一管理测试路径与共享 fixture，克隆后即可直接运行。
+- `tests/test_regressions_p0.py` 中的 `xfail(strict=True)` 用例对应**已确认但尚未修复**的缺陷；修复后会自动转为 XPASS 并导致测试失败，此时请移除对应标记，避免缺陷回归。
 
 ---
 

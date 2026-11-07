@@ -147,7 +147,7 @@ class TestCacheConfig:
 
     def test_cache_config_type(self):
         from config.cache import CACHE_CONFIG
-        assert CACHE_CONFIG["type"] in ["memory", "redis", "memcached"]
+        assert CACHE_CONFIG["type"] in ["memory", "redis"]
 
     def test_cache_config_enabled(self):
         from config.cache import CACHE_CONFIG

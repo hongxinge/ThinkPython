@@ -12,11 +12,13 @@
 
 | 文档 | 说明 |
 |------|------|
+| [客户端 API 契约](api-contract.md) | **客户端团队必读**：响应结构、错误码表、双 Token 流程、请求追踪、限流退避、接入清单 |
 | [数据库配置](database.md) | MySQL、PostgreSQL、SQLite、MSSQL 配置方法及驱动安装 |
-| [缓存使用](cache.md) | Redis、Memory、Memcached 配置方法，使用 `get_cache`/`set_cache`/`delete_cache` 操作缓存 |
+| [缓存使用](cache.md) | Redis / Memory 配置方法，使用 `get_cache`/`set_cache`/`delete_cache` 操作缓存 |
 | [多模块模式](modules.md) | 单模块与多模块模式切换，创建新模块，URL 路由前缀规则 |
 | [公共模块](common.md) | 跨模块共享的 Model/Service，`BaseAuthController` 使用方法 |
 | [认证机制](auth.md) | JWT 认证、三种免验证方式、登录/注册/忘记密码完整示例、安全最佳实践 |
+| [权限控制](rbac.md) | 接口级 RBAC：角色定义、`@require_permission`、角色变更后 Token 失效、与数据级权限的分界 |
 | [make-crud](make-crud.md) | 根据数据库表结构一键生成 Model/Controller/Service 三层完整代码 |
 
 ## 工具类
@@ -34,6 +36,7 @@
 | [配置说明](config.md) | 所有配置项的完整说明和默认值 |
 | [部署指南](deploy.md) | 生产环境部署步骤和注意事项 |
 | [API 使用示例](api.md) | 完整的 CRUD API 开发示例 |
+| [架构决策记录](architecture-decisions.md) | 分层边界、响应契约、D1-D6 关键取舍、企业级能力分期 |
 
 ## 推荐阅读顺序
 
@@ -60,7 +63,9 @@ python think.py list-routes          # 列出所有路由
 
 ## 统一响应格式
 
-所有接口返回统一格式：
+所有接口返回统一结构，**HTTP 状态码表达传输层结果，`code` 表达业务结果**（过渡期可用
+`ERROR_HTTP_MODE=legacy` 恢复旧的「一律 200」行为，详见
+[架构决策记录](architecture-decisions.md)）：
 
 ```json
 {

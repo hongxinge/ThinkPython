@@ -106,11 +106,20 @@ DB_ECHO=True
 
 ## 数据库迁移
 
-配置好数据库后，执行迁移命令创建表：
+配置好数据库后，按版本化方式建表：
 
 ```bash
-python think.py db-migrate
+# 首次：根据模型生成初始迁移脚本并应用
+python think.py db-migrate --auto -m "初始表结构"
+python think.py db-migrate --upgrade
+
+# 之后每次改模型：生成脚本 → 应用
+python think.py db-migrate --auto -m "添加订单表"
+python think.py db-migrate --upgrade
 ```
+
+迁移在同步驱动下执行，`alembic/env.py` 会自动把 `mysql+aiomysql` 这类
+异步 URL 转换为 `mysql+pymysql`，无需单独维护连接串。
 
 ---
 

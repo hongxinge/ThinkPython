@@ -109,9 +109,13 @@ class AuthController(BaseAuthController):
             auth_service = AuthService(db)
             result = await auth_service.login(data.username, data.password)
             if not result:
-                return self.error(message="用户名或密码错误", code=401)
+                return self.error(message="用户名或密码错误", code=ErrorCode.INVALID_CREDENTIALS)
+            # 返回双 Token，客户端用 refresh_token 免登录续期
             return self.success(data={
-                "token": result["token"],
+                "access_token": result["access_token"],
+                "refresh_token": result["refresh_token"],
+                "token_type": result["token_type"],
+                "expires_in": result["expires_in"],
                 "user_id": result["user"].id,
             })
         
@@ -121,9 +125,11 @@ class AuthController(BaseAuthController):
             new_user = User(
                 username=data.username,
                 password=auth_service.hash_password(data.password),
+                email=data.email,          # 注册契约要求邮箱必填
             )
             db.add(new_user)
-            await db.commit()
+            # 事务由 get_db 统一提交，这里只 flush 拿到自增主键
+            await db.flush()
             return self.success(data={"user_id": new_user.id})
         
         # 忘记密码使用 @skip_auth 装饰器
@@ -139,9 +145,14 @@ class AuthController(BaseAuthController):
         async def get_profile(request: Request):
             user = self.get_current_user(request)
             if not user:
-                return self.error(message="未登录", code=401)
+                return self.error(message="未登录", code=ErrorCode.TOKEN_MISSING)
             return self.success(data={"user_id": user.user_id})
 ```
+
+> 框架已内置以下接口，无需自己实现：
+> `POST /auth/login`、`POST /auth/register`、`POST /auth/refresh`、
+> `POST /auth/logout`、`GET /auth/permissions`、`GET|PUT /auth/profile`、
+> `POST /auth/change-password`。详见 [客户端 API 契约](api-contract.md)。
 
 ## 请求示例
 
@@ -167,38 +178,37 @@ curl -X POST http://localhost:8000/api/auth/change-password \
   -d '{"old_password": "123456", "new_password": "654321"}'
 ```
 
-## 双 Token 刷新（后端用法）
+## 双 Token 刷新
 
-ThinkPython 内置双 Token 机制（Access Token 短期有效 + Refresh Token 长期有效）。
-在控制器中调用 `helpers/auth.py` 提供的异步函数即可实现 Token 刷新和登出：
+ThinkPython 内置双 Token 机制（Access Token 短期有效 + Refresh Token 长期有效），
+**刷新与登出接口已随框架提供**，无需自己实现：
+
+```bash
+# 刷新（Refresh Token 无效或已被轮换过时返回 1009）
+curl -X POST http://localhost:8000/api/auth/refresh \
+  -H "Content-Type: application/json" \
+  -d '{"refresh_token": "eyJhbGciOi..."}'
+
+# 登出（开启 TOKEN_BLACKLIST_ENABLED 时当前 Token 立即失效）
+curl -X POST http://localhost:8000/api/auth/logout \
+  -H "Authorization: Bearer eyJhbGciOi..."
+```
+
+若需要在业务代码中手动调用底层函数：
 
 ```python
-from helpers.auth import create_refresh_token, refresh_access_token, blacklist_token
+from helpers.auth import blacklist_token, refresh_access_token
 
-@self.router.post("/auth/refresh")
-async def refresh(refresh_token: str):
-    """用 Refresh Token 换取新的 Access Token"""
-    try:
-        # 注意：refresh_access_token 是异步函数，必须 await
-        result = await refresh_access_token(refresh_token)
-        return self.success(data=result, message="刷新成功")
-    except ValueError as e:
-        # Refresh Token 无效/过期/已轮换，需要重新登录
-        return self.error(message=str(e), code=401)
+# 刷新：返回新的 access_token / refresh_token / expires_in
+result = await refresh_access_token(refresh_token)
 
-@self.router.post("/auth/logout")
-async def logout(request: Request):
-    """登出：将当前 Token 加入黑名单（需开启 TOKEN_BLACKLIST_ENABLED）"""
-    authorization = request.headers.get("Authorization", "")
-    token = authorization.replace("Bearer ", "") if authorization else None
-    if token:
-        # 注意：blacklist_token 是异步函数，必须 await
-        await blacklist_token(token)
-    return self.success(message="已退出登录")
+# 吊销：把指定 Token 的 jti 写入黑名单
+await blacklist_token(token)
 ```
 
 > 💡 默认配置下 Access Token 2 小时过期、Refresh Token 7 天过期，且开启轮换
 > （每次刷新会签发新的 Refresh Token，旧 Token 立即作废，防止 Token 泄露被长期利用）。
+> 客户端如何处理 1004 / 1005 / 1009，见 [客户端 API 契约](api-contract.md)。
 
 ## 认证流程图
 

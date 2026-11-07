@@ -32,6 +32,7 @@ Model（数据结构定义）
 from typing import Optional, Dict, Any
 from sqlalchemy.ext.asyncio import AsyncSession
 from core.base_service import BaseService
+from app.single.model.user_model import User
 
 
 class UserService(BaseService):
@@ -52,6 +53,9 @@ class UserService(BaseService):
         exists = await service.check_user_exists("zhangsan")
     """
     
+    # BaseService 的 CRUD 方法依赖该属性；声明为类属性便于静态检查与测试
+    model_class = User
+
     def __init__(self, db: AsyncSession):
         """初始化用户服务
         
@@ -59,7 +63,7 @@ class UserService(BaseService):
             db: SQLAlchemy 异步数据库会话，通过 FastAPI 依赖注入传入
         """
         super().__init__(db)
-        # self.model_class = User  # 如果需要直接操作模型，取消注释并导入 User 模型
+        # 模型类已在类体中声明为类属性，此处无需重复赋值
     
     async def get_user_by_username(self, username: str) -> Optional[Dict[str, Any]]:
         """根据用户名获取用户信息

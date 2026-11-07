@@ -17,7 +17,7 @@ python think.py <command> [arguments]
 | `make-model` | 创建数据模型 | `python think.py make-model User` |
 | `make-service` | 创建服务层 | `python think.py make-service User` |
 | `make-module` | 创建新模块 | `python think.py make-module order` |
-| `db-migrate` | 数据库迁移 | `python think.py db-migrate` |
+| `db-migrate` | 数据库迁移 | `python think.py db-migrate --upgrade` |
 | `list-routes` | 列出所有路由 | `python think.py list-routes` |
 
 ---
@@ -187,10 +187,39 @@ python think.py make-module order
 
 ## db-migrate - 数据库迁移
 
+依赖 Alembic 实现版本化迁移。迁移在同步驱动下执行，`alembic/env.py`
+会自动把应用配置里的异步 URL（如 `mysql+aiomysql`）转换成同步驱动，
+无需手工维护两套连接串。
+
 ```bash
-# 执行数据库迁移（创建表）
-python think.py db-migrate
+# 生成迁移脚本（根据模型变更自动对比）
+python think.py db-migrate --auto -m "添加订单表"
+
+# 应用迁移到最新版本
+python think.py db-migrate --upgrade
+
+# 回滚最近一次迁移
+python think.py db-migrate --downgrade
+
+# 查看历史 / 当前版本
+python think.py db-migrate --history
+python think.py db-migrate --current
 ```
+
+| 参数 | 作用 |
+|---|---|
+| `--auto` / `-m` | `--auto` 配合 `-m "描述"` 生成迁移脚本 |
+| `--upgrade` | 执行所有未应用的迁移（常用） |
+| `--downgrade` | 回滚一步 |
+| `--history` | 列出迁移历史 |
+| `--current` | 显示数据库当前版本 |
+| 无参数 | 简单模式：`create_all` 补建缺失表，不记录版本、不可回滚 |
+
+行为保证：
+
+- **失败即非零退出码**：迁移出错时命令返回 1，CI / 容器编排不会把失败当成功；
+- **模型导入失败即中止**：避免静默漏表（确需忽略时设 `ALEMBIC_ALLOW_MODEL_IMPORT_ERRORS=true`）；
+- **SQLite batch 模式**：改字段时自动重建表，解决 SQLite 不支持 `ALTER COLUMN` 的限制。
 
 ---
 

@@ -31,11 +31,14 @@ ThinkPython 公共用户模型
     - nickname: 用户昵称
     - avatar: 头像URL
     - status: 状态（0=禁用，1=启用）
+    - token_version: Token 版本号（改密/禁用时递增）
+    - role: 角色标识（权限映射见 config/permissions.py）
     - created_at: 创建时间（继承自BaseModel）
     - updated_at: 更新时间（继承自BaseModel）
 """
 from sqlalchemy import Column, String, Integer, SmallInteger
 from core.base_model import BaseModel
+from config.permissions import DEFAULT_ROLE
 
 
 class User(BaseModel):
@@ -109,4 +112,25 @@ class User(BaseModel):
         SmallInteger,
         default=1,
         comment="状态: 0=禁用, 1=启用",
+    )
+
+    # Token 版本号：每次改密 / 禁用账号时 +1，使该用户已签发的 Token 立即失效。
+    # 签发时写入 JWT payload 的 ver 字段，校验时与此列比对。
+    token_version = Column(
+        Integer,
+        default=0,
+        nullable=False,
+        server_default="0",
+        comment="Token 版本号，改密/禁用时递增使旧 Token 失效",
+    )
+
+    # 角色：决定该用户拥有的权限集合，角色到权限的映射见 config/permissions.py
+    # 签发 Token 时写入 payload 的 role；修改角色后需 bump token_version 使旧 Token 失效
+    # 默认值取 DEFAULT_ROLE，保证与权限模块的口径一致
+    role = Column(
+        String(32),
+        nullable=False,
+        default=DEFAULT_ROLE,
+        server_default=DEFAULT_ROLE,
+        comment="角色标识，如 user / admin",
     )

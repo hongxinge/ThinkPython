@@ -80,7 +80,15 @@ def get_router_by_mode() -> APIRouter:
         main_router = get_router_by_mode()
         app.include_router(main_router)
     """
-    main_router = APIRouter()
+    # 全局路由前缀（ROUTE_PREFIX），用于 /api/v1 这类版本化命名空间。
+    # 前缀加在主路由器上，控制器内部的路径无需感知版本号。
+    prefix = (APP_CONFIG.get("route_prefix") or "").strip()
+    if prefix:
+        if not prefix.startswith("/"):
+            prefix = "/" + prefix
+        prefix = prefix.rstrip("/")
+
+    main_router = APIRouter(prefix=prefix)
     
     # 根据模块模式选择对应的路由注册策略
     if APP_CONFIG["module_mode"] == "multi":

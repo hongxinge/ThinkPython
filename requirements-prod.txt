@@ -1,0 +1,20 @@
+# ThinkPython 生产环境依赖
+#
+# 与 requirements.txt 的区别：
+#   requirements.txt      开发与运行都需要的核心依赖（跨平台，Windows 可装）
+#   requirements-prod.txt 仅 Linux 生产环境需要的进程管理组件
+#
+# 安装方式：
+#   pip install -r requirements.txt -r requirements-prod.txt
+#
+# 注意：gunicorn 不支持 Windows（无 fcntl），Windows 开发环境不要安装本文件。
+# Windows 本地开发直接用 `python think.py run` 或 uvicorn 即可。
+
+# ASGI 进程管理器：多 worker、优雅重启、worker 超时自动回收
+gunicorn>=23.0.0
+
+# PostgreSQL 同步驱动（Alembic 迁移需要；使用 MySQL/SQLite 时可不装）
+# psycopg2-binary>=2.9.9
+
+# MSSQL 同步驱动（Alembic 迁移需要；仅使用 MSSQL 时安装）
+# pyodbc>=5.1.0

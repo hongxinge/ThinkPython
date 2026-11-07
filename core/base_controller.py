@@ -28,7 +28,12 @@ BaseController 提供了统一的响应格式和常用方法，包括：
                 return self.success(data=[{"id": 1, "name": "张三"}])
 """
 from fastapi import APIRouter, Request, Depends
+from fastapi.responses import JSONResponse
 from typing import Any, Dict, Optional
+
+from config.app import APP_CONFIG
+from core.error_codes import http_status_of
+from core.exception import error_payload
 
 
 class BaseController:
@@ -84,28 +89,47 @@ class BaseController:
             "data": data,
         }
     
-    def error(self, message: str = "error", code: int = 500, data: Any = None) -> Dict:
+    def error(
+        self,
+        message: str = "error",
+        code: int = 500,
+        data: Any = None,
+        http_status: Optional[int] = None,
+    ):
         """返回错误响应
         
         构造统一的 JSON 错误响应格式：{"code": 500, "message": "error", "data": ...}
+        
+        响应模式由 APP_CONFIG["error_http_mode"] 控制：
+        - standard（默认）：返回带真实 HTTP 状态码的 JSONResponse；
+        - legacy：保留旧行为，返回 dict 并由 FastAPI 以 HTTP 200 发送。
         
         Args:
             message: 错误提示信息
             code: 业务错误码，默认 500
             data: 附加的错误详情数据（可选）
+            http_status: 显式 HTTP 状态码；不传时优先使用 code（仅当其为合法状态码）
             
         Returns:
-            Dict: 格式化的错误响应字典
+            JSONResponse | Dict: 错误响应
             
         使用示例:
             return self.error(message="操作失败")
             return self.error(message="参数错误", code=400)
+            return self.error(message="Token 过期", code=40101, http_status=401)
         """
-        return {
-            "code": code,
-            "message": message,
-            "data": data,
-        }
+        payload = error_payload(code, message, data)
+
+        if APP_CONFIG.get("error_http_mode", "standard") == "legacy":
+            return payload
+
+        # 显式 http_status 优先；否则按业务码映射（如 1006 → 401），
+        # 未登记的纯业务码回落 500，避免产出非法 HTTP 状态行
+        status = http_status if http_status is not None else http_status_of(code)
+        if not isinstance(status, int) or not (100 <= status <= 599):
+            status = 500
+
+        return JSONResponse(status_code=status, content=payload)
     
     def paginate(self, items: list, total: int, page: int = 1, page_size: int = 10) -> Dict:
         """返回分页响应
@@ -136,6 +160,12 @@ class BaseController:
             items = [{"id": 1}, {"id": 2}]
             return self.paginate(items, total=100, page=1, page_size=10)
         """
+        # 防御非法分页参数：page_size <= 0 会导致除零
+        page_size = max(1, page_size or 1)
+        total = max(0, total or 0)
+        # 向上取整计算总页数，例如 101 条数据 / 每页 10 条 = 11 页
+        total_pages = (total + page_size - 1) // page_size
+
         return {
             "code": 200,
             "message": "success",
@@ -144,7 +174,6 @@ class BaseController:
                 "total": total,
                 "page": page,
                 "page_size": page_size,
-                # 向上取整计算总页数，例如 101 条数据 / 每页 10 条 = 11 页
-                "total_pages": (total + page_size - 1) // page_size,
+                "total_pages": total_pages,
             },
         }

@@ -229,10 +229,12 @@ class UserController(BaseController):
 ## 5. 执行数据库迁移
 
 ```bash
-python think.py db-migrate
+python think.py db-migrate --auto -m "初始表结构"
+python think.py db-migrate --upgrade
 ```
 
-这会自动扫描所有模型并创建对应的数据库表。
+第一条按模型生成迁移脚本，第二条应用迁移。生成的脚本在
+`alembic/versions/` 下，应一并提交版本库。
 
 ---
 

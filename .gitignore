@@ -54,6 +54,15 @@ pip-delete-this-directory.txt
 # Environment
 .env
 !.env.example
+# 部署目录内的生产密钥文件
+deploy/.env
+
+# TLS 证书与私钥（绝不入库）
+*.pem
+*.key
+*.crt
+*.p12
+!deploy/ssl/README.md
 
 # 本地测试资料
 本地测试资料.txt
@@ -158,3 +167,19 @@ dmypy.json
 # Cython debug symbols
 cython_debug/
 /push.bat
+
+# 工作区本地数据（协作记忆、临时产物）
+.workbuddy/
+
+# 运行时上传产物（仅保留目录占位）
+uploads/*
+!uploads/.gitkeep
+!uploads/images/
+!uploads/documents/
+!uploads/files/
+uploads/images/*
+uploads/documents/*
+uploads/files/*
+!uploads/images/.gitkeep
+!uploads/documents/.gitkeep
+!uploads/files/.gitkeep

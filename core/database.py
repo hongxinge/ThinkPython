@@ -43,6 +43,36 @@ async_session = None
 Base = declarative_base()
 
 
+def _enable_sqlite_pragmas(engine) -> None:
+    """为 SQLite 文件数据库设置必要的 PRAGMA
+
+    这三项是 SQLite 上生产可用的前提，默认值都不合适：
+
+    ======================  ==========  ========================================
+    PRAGMA                  默认值      开启后
+    ======================  ==========  ========================================
+    journal_mode            delete      WAL：读写不互相阻塞，并发请求不会整库排队
+    synchronous             FULL        NORMAL：配合 WAL 仍能保证崩溃一致性，写入快数倍
+    foreign_keys            OFF         ON：默认竟然不校验外键，数据一致性全靠应用层
+    busy_timeout            0           5000ms：并发写入时等待而非立即报 database is locked
+    ======================  ==========  ========================================
+
+    内存库不调用此函数（``:memory:`` 不支持 WAL）。
+    """
+    from sqlalchemy import event
+
+    @event.listens_for(engine.sync_engine, "connect")
+    def _set_sqlite_pragma(dbapi_connection, connection_record):  # noqa: ANN001, ARG001
+        cursor = dbapi_connection.cursor()
+        try:
+            cursor.execute("PRAGMA journal_mode=WAL")
+            cursor.execute("PRAGMA synchronous=NORMAL")
+            cursor.execute("PRAGMA foreign_keys=ON")
+            cursor.execute("PRAGMA busy_timeout=5000")
+        finally:
+            cursor.close()
+
+
 async def init_database():
     """初始化数据库连接
     
@@ -73,12 +103,14 @@ async def init_database():
     is_sqlite = "sqlite" in db_url
     
     if is_sqlite:
-        # SQLite 使用 NullPool（每次请求创建新连接）
-        # 因为 SQLite 是文件数据库，不需要连接池复用
+        # SQLite 是文件数据库，不需要连接池复用
         engine = create_async_engine(
             db_url,
             echo=DATABASE_CONFIG["echo"],
         )
+        # 内存库不支持 WAL（每次连接是独立库），文件库才启用
+        if ":memory:" not in db_url:
+            _enable_sqlite_pragmas(engine)
     else:
         # MySQL / PostgreSQL / MSSQL 使用连接池
         # create_async_engine 是 SQLAlchemy 提供的异步版本引擎创建函数

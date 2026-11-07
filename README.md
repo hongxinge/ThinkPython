@@ -78,6 +78,8 @@ ThinkPython 是**为客户端 App / 小程序 / 前端提供 JSON API** 的后�
 | 🛡️ **暴力破解防护** | IP 维度限流 + 账号维度失败锁定（423），两级防护 |
 | 🎫 **接口级权限** | 角色 + 权限标识，`@require_permission` 一行声明，见 [权限控制](docs/rbac.md) |
 | ♻️ **幂等重试** | 客户端带 `Idempotency-Key`，服务端回放首次结果，弱网重试不重复下单 |
+| ⚡ **一键生成客户端 SDK** | `make-client` 从契约生成 TypeScript 客户端，内置刷新/幂等/追踪，见 [SDK 生成](docs/cli.md#make-client---生成客户端-sdk) |
+| 🚀 **响应压缩** | JSON 接口实测省 80% 流量，小响应与图片/视频自动跳过 |
 | 🔄 **单/多模块切换** | 配置自由切换，小项目用单模块，大项目用多模块 |
 | 🗄️ **多数据库支持** | MySQL / PostgreSQL / SQLite / MSSQL 一键配置 |
 | 💾 **多缓存支持** | Redis（生产）/ Memory（开发）零侵入切换 |
@@ -180,6 +182,8 @@ python think.py make-module order    # 创建新模块
 python think.py db-migrate --auto -m "描述"  # 生成迁移脚本
 python think.py db-migrate --upgrade         # 应用迁移
 python think.py list-routes          # 列出所有路由
+python think.py openapi              # 导出 OpenAPI 契约 + 契约体检
+python think.py make-client --lang ts --out client   # 生成 TypeScript 客户端 SDK
 ```
 
 > 💡 **make-crud**：配置好数据库后，一条命令 `python think.py make-crud user` 即可根据 `user` 表结构自动生成 Model、Controller、Service 三层完整代码，包含字段类型、注释、Pydantic 验证等，详见 [make-crud 文档](docs/make-crud.md)。

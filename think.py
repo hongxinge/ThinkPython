@@ -1062,6 +1062,92 @@ class ListRoutesCommand(Command):
         print(f"\n共 {route_count} 个路由\n")
 
 
+class OpenAPICommand(Command):
+    """导出 OpenAPI 契约命令
+
+    直接调用 ``app.openapi()`` 生成 schema，不经过 HTTP 端点。
+    因此生产环境即使关闭了 ``/openapi.json``，依然可以导出契约用于
+    生成 SDK 或导入 Apifox / Postman。
+
+    同时输出一份契约体检：哪些接口缺少 summary、哪些响应类型不精确。
+    这些不是"洁癖"，而是直接影响客户端能否拿到类型安全的东西。
+    """
+
+    def __init__(self):
+        super().__init__("openapi", "导出 OpenAPI 契约并做质量体检")
+
+    def handle(self, args: argparse.Namespace) -> None:
+        from core.openapi_export import export_schema, format_report, inspect_schema
+
+        output = getattr(args, "out", None) or "openapi.json"
+        as_stdout = bool(getattr(args, "stdout", False))
+
+        report = inspect_schema()
+
+        if as_stdout:
+            import json as _json
+
+            from core.openapi_export import build_schema
+
+            print(_json.dumps(build_schema(), ensure_ascii=False, indent=2))
+            print(format_report(report), file=sys.stderr)
+            return
+
+        path, size = export_schema(output)
+        print(f"\n✅ 契约已导出: {path}")
+        print(f"   体积 {size / 1024:.1f} KB · 接口 {report['total_operations']} 个 · 模型 {report['total_schemas']} 个")
+        print()
+        print(format_report(report))
+        print()
+        print("下一步：python think.py make-client --lang ts --out client")
+
+
+class MakeClientCommand(Command):
+    """生成客户端 SDK 命令
+
+    从 OpenAPI 契约生成零依赖的 TypeScript 客户端，客户端团队拿到即可接入，
+    不必再为"怎么调接口、怎么刷新 token、怎么重试"重复造轮子。
+    """
+
+    def __init__(self):
+        super().__init__("make-client", "从 OpenAPI 契约生成客户端 SDK")
+
+    def handle(self, args: argparse.Namespace) -> None:
+        from pathlib import Path as _Path
+
+        from core.openapi_export import format_report, inspect_schema
+        from core.sdkgen import generate
+
+        lang = (getattr(args, "lang", None) or "ts").lower()
+        if lang not in ("ts", "typescript"):
+            print(f"❌ 暂不支持的客户端语言: {lang}")
+            print("   当前支持: ts（TypeScript）")
+            raise SystemExit(1)
+
+        out_dir = _Path(getattr(args, "out", None) or "client")
+        base_url = getattr(args, "base_url", None) or "http://localhost:8000"
+
+        report = inspect_schema()
+        result = generate(out_dir, base_url_hint=base_url, report=report)
+
+        print(f"\n✅ 客户端 SDK 已生成: {result['out_dir']}")
+        print(f"   接口 {result['operations']} 个 · 文件 {len(result['files'])} 个")
+        for name in result["files"]:
+            print(f"     · {name}")
+
+        if result["type_degraded"]:
+            print(
+                f"\n⚠️  其中 {result['type_degraded']} 个接口的返回类型退化为 unknown"
+                f"（服务端未声明 response_model）"
+            )
+
+        print()
+        print(format_report(report))
+        print()
+        print("下一步：")
+        print(f"   cd {out_dir} && npm install && npm run typecheck")
+
+
 def create_parser() -> argparse.ArgumentParser:
     """创建命令行参数解析器
     
@@ -1125,7 +1211,20 @@ def create_parser() -> argparse.ArgumentParser:
     
     # list-routes 命令
     subparsers.add_parser("list-routes", help="列出所有路由")
-    
+
+    # openapi 命令
+    oa_parser = subparsers.add_parser("openapi", help="导出 OpenAPI 契约并做质量体检")
+    oa_parser.add_argument("--out", "-o", default="openapi.json", help="输出文件路径")
+    oa_parser.add_argument("--stdout", action="store_true", help="输出到标准输出（体检信息走 stderr）")
+
+    # make-client 命令
+    mc_client_parser = subparsers.add_parser("make-client", help="从 OpenAPI 契约生成客户端 SDK")
+    mc_client_parser.add_argument("--lang", "-l", default="ts", help="目标语言，当前支持 ts")
+    mc_client_parser.add_argument("--out", "-o", default="client", help="输出目录")
+    mc_client_parser.add_argument(
+        "--base-url", default="http://localhost:8000", help="README 示例中的服务端地址"
+    )
+
     return parser
 
 
@@ -1149,6 +1248,8 @@ def main():
         "make-module": MakeModuleCommand,
         "db-migrate": DBMigrateCommand,
         "list-routes": ListRoutesCommand,
+        "openapi": OpenAPICommand,
+        "make-client": MakeClientCommand,
     }
     
     command_class = commands.get(args.command)

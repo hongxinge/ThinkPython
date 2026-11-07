@@ -53,6 +53,14 @@ APP_CONFIG = {
     # 开启后会显示详细的错误堆栈、启用 API 文档（/docs 和 /redoc）、开启热重载等
     "debug": os.getenv("APP_DEBUG", "True").lower() == "true",
 
+    # OpenAPI schema 端点开关（/openapi.json）
+    # true  - 暴露 schema，便于生成客户端 SDK、对接 Apifox / Postman 等工具
+    # false - 生产环境若担心接口结构外泄可关闭；注意 think.py 的 openapi/make-client
+    #         命令不依赖该端点（直接调用 app.openapi()），关闭后仍可正常生成 SDK
+    "openapi_enabled": os.getenv(
+        "OPENAPI_ENABLED", "true" if os.getenv("APP_DEBUG", "True").lower() == "true" else "false"
+    ).lower() == "true",
+
     # 错误响应模式
     # "standard" - 推荐：HTTP 状态码表达传输语义，body.code 表达业务语义
     # "legacy"   - 兼容旧版：所有 self.error() 一律返回 HTTP 200，靠 body.code 判断
@@ -113,5 +121,17 @@ APP_CONFIG = {
         # 慢请求阈值（毫秒）：超过此耗时的请求以 WARNING 级别记录，
         # 便于直接按日志级别抓取慢接口，无需额外 APM
         "slow_request_ms": int(os.getenv("LOG_SLOW_REQUEST_MS", "500")),
+    },
+
+    # 响应压缩
+    # 客户端（App/小程序）走的是移动网络，JSON 列表接口压缩率通常在 70% 以上，
+    # 直接省流量、省首屏时间。图片/视频/zip/SSE 由中间件自动跳过，不会白白耗 CPU。
+    "gzip": {
+        # 是否启用压缩
+        "enabled": os.getenv("GZIP_ENABLED", "true").lower() == "true",
+        # 小于该字节数的响应不压缩（压缩后可能更大，且省不了多少流量）
+        "minimum_size": int(os.getenv("GZIP_MINIMUM_SIZE", "1024")),
+        # 压缩级别 1-9：6 是速度与压缩率的平衡点，9 会明显吃 CPU
+        "compresslevel": int(os.getenv("GZIP_COMPRESS_LEVEL", "6")),
     },
 }

@@ -19,8 +19,12 @@ ThinkPython 示例后台管理员控制器 - 多模块模式
 - Token 必须设置合理的过期时间
 - 敏感操作需要二次验证
 """
-from pydantic import BaseModel
+from typing import List
+
+from pydantic import BaseModel, Field
+
 from core.base_controller import BaseController
+from core.schema import ApiResponse
 from helpers.auth import require_permission
 from helpers.response import success_response
 
@@ -34,6 +38,34 @@ class AdminLoginRequest(BaseModel):
     """
     username: str  # 管理员用户名
     password: str  # 管理员密码
+
+
+class AdminLoginData(BaseModel):
+    """管理员登录返回的业务数据"""
+
+    token: str = Field(..., description="访问令牌")
+
+
+class AdminInfoData(BaseModel):
+    """管理员信息"""
+
+    username: str = Field(..., description="管理员用户名")
+    role: str = Field(..., description="角色标识")
+
+
+class MenuItem(BaseModel):
+    """菜单项"""
+
+    id: int = Field(..., description="菜单 ID")
+    name: str = Field(..., description="菜单名称")
+    icon: str = Field(..., description="图标名")
+    path: str = Field(..., description="前端路由路径")
+
+
+class AdminMenuData(BaseModel):
+    """菜单权限返回的业务数据"""
+
+    menus: List[MenuItem] = Field(default_factory=list, description="可访问的菜单列表")
 
 
 class AdminController(BaseController):
@@ -66,7 +98,7 @@ class AdminController(BaseController):
         """初始化路由配置"""
         
         # 管理员登录接口
-        @self.router.post("/admin/login", summary="管理员登录")
+        @self.router.post("/admin/login", summary="管理员登录", response_model=ApiResponse[AdminLoginData])
         async def login(request: AdminLoginRequest):
             """管理员登录 - 验证账号密码并返回 JWT Token
             
@@ -93,7 +125,7 @@ class AdminController(BaseController):
             return self.success(data={"token": "example-token"}, message="登录成功")
         
         # 获取管理员信息接口
-        @self.router.get("/admin/info", summary="获取管理员信息")
+        @self.router.get("/admin/info", summary="获取管理员信息", response_model=ApiResponse[AdminInfoData])
         async def get_info():
             """获取当前登录管理员的详细信息
             
@@ -111,7 +143,7 @@ class AdminController(BaseController):
             return self.success(data={"username": "admin", "role": "super_admin"})
         
         # 获取菜单权限接口
-        @self.router.get("/admin/menu", summary="获取菜单权限")
+        @self.router.get("/admin/menu", summary="获取菜单权限", response_model=ApiResponse[AdminMenuData])
         @require_permission("admin:menu")
         async def get_menu():
             """根据管理员角色返回可访问的菜单列表

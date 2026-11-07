@@ -19,6 +19,8 @@ python think.py <command> [arguments]
 | `make-module` | 创建新模块 | `python think.py make-module order` |
 | `db-migrate` | 数据库迁移 | `python think.py db-migrate --upgrade` |
 | `list-routes` | 列出所有路由 | `python think.py list-routes` |
+| `openapi` | 导出契约并体检 | `python think.py openapi` |
+| `make-client` | 生成客户端 SDK | `python think.py make-client --lang ts` |
 
 ---
 
@@ -241,3 +243,81 @@ GET          /user/list                                 用户列表
 GET          /user/{user_id}                            获取用户详情                    
 POST         /user                                      创建用户                        
 ```
+
+---
+
+## openapi - 导出契约并体检
+
+```bash
+# 导出到 openapi.json（默认），同时打印契约体检报告
+python think.py openapi
+
+# 指定输出路径
+python think.py openapi --out docs/openapi.json
+
+# 输出到标准输出（体检信息走 stderr，便于管道处理）
+python think.py openapi --stdout > openapi.json
+```
+
+| 参数 | 作用 |
+|---|---|
+| `--out` / `-o` | 输出路径，默认 `openapi.json`，父目录会自动创建 |
+| `--stdout` | 打印到标准输出；体检信息写到 stderr |
+
+**不依赖 HTTP 端点**：命令直接调用 `app.openapi()`，所以生产环境即使设置
+`OPENAPI_ENABLED=false` 关闭了 `/openapi.json`，依然可以导出契约。
+
+体检报告会指出三类会拖累客户端的问题：
+
+| 问题 | 影响 | 修复方式 |
+|---|---|---|
+| 响应类型是「任意对象」 | 生成的 SDK 里 `data` 是 `unknown` | 路由加 `response_model=ApiResponse[你的模型]` |
+| 缺少 summary | SDK 方法没有注释 | 装饰器补 `summary="动作描述"` |
+| 写操作缺请求体 | 客户端不知道传什么 | 为 POST/PUT/PATCH 声明 Pydantic 模型 |
+
+---
+
+## make-client - 生成客户端 SDK
+
+```bash
+# 生成 TypeScript 客户端到 ./client
+python think.py make-client
+
+# 指定目录与服务端地址（写进 README 示例）
+python think.py make-client --lang ts --out apps/mobile/sdk --base-url https://api.example.com
+```
+
+| 参数 | 作用 |
+|---|---|
+| `--lang` / `-l` | 目标语言，当前支持 `ts` |
+| `--out` / `-o` | 输出目录，默认 `client` |
+| `--base-url` | README 示例里的服务端地址 |
+
+生成物：
+
+```
+client/
+├── README.md        用法、错误处理约定、接口清单
+├── package.json     含 build / typecheck 脚本
+├── tsconfig.json    严格模式
+└── src/
+    ├── types.ts     Schema 接口 + ApiResponse<T>
+    ├── client.ts    HttpClient（双 Token 自动刷新、幂等键、请求追踪）
+    ├── api.ts       按路径生成的类型化方法
+    └── index.ts     统一导出
+```
+
+```bash
+cd client && npm install && npm run typecheck
+```
+
+客户端内置的能力（不需要业务代码再实现一遍）：
+
+- access token 过期（业务码 `1004`）自动刷新并重放原请求；
+- 并发请求同时过期时只发一次刷新，避免轮换机制互踢；
+- 写请求传 `idempotencyKey` 即可弱网安全重试；
+- 自动生成 `X-Request-ID`，`ApiError.requestId` 可直接报给后端；
+- `NetworkError` 与 `ApiError` 分离，前者可重试、后者是业务拒绝。
+
+类型完整度取决于服务端契约：没声明 `response_model` 的接口，生成的类型是
+`unknown`（并在命令行提示数量），不会假装类型完整。

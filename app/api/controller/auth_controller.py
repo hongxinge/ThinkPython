@@ -23,12 +23,13 @@ ThinkPython 认证控制器 - 登录、注册、个人中心
     curl -X GET http://localhost:8000/api/auth/profile \
       -H "Authorization: Bearer <token>"
 """
-from typing import Optional
+from typing import List, Optional
 from pydantic import BaseModel, Field
 
 from fastapi import Depends, Request
 
 from core.base_controller import BaseController
+from core.schema import ApiResponse
 from app.common.controller.base_auth_controller import BaseAuthController
 from helpers.auth import (
     CurrentUser,
@@ -90,6 +91,52 @@ class ForgotPasswordRequest(BaseModel):
     email: str = Field(..., description="注册邮箱")
 
 
+# ==============================
+# 响应模型定义
+# ==============================
+# 声明 response_model 后，OpenAPI 会生成精确的 data 结构，
+# 客户端 SDK 才能拿到强类型而不是 unknown。
+
+class LoginData(BaseModel):
+    """登录成功的业务数据"""
+    token: str = Field(..., description="access_token 的兼容字段，新客户端请用 access_token")
+    access_token: str = Field(..., description="访问令牌，放入 Authorization: Bearer <token>")
+    refresh_token: str = Field(..., description="刷新令牌，access_token 过期时换取新令牌")
+    token_type: str = Field(default="bearer", description="令牌类型")
+    expires_in: int = Field(..., description="access_token 有效期（秒）")
+    user_id: int = Field(..., description="用户 ID")
+    username: str = Field(..., description="用户名")
+
+
+class RefreshData(BaseModel):
+    """刷新令牌返回的业务数据"""
+    access_token: str = Field(..., description="新的访问令牌")
+    refresh_token: Optional[str] = Field(
+        None, description="新的刷新令牌；开启轮换时必有，旧值随即失效"
+    )
+    token_type: str = Field(default="bearer", description="令牌类型")
+    expires_in: int = Field(..., description="access_token 有效期（秒）")
+
+
+class LogoutData(BaseModel):
+    """退出登录返回的业务数据"""
+    blacklisted: bool = Field(
+        ..., description="服务端是否已将当前 Token 加入黑名单（取决于 TOKEN_BLACKLIST_ENABLED）"
+    )
+
+
+class PermissionsData(BaseModel):
+    """当前用户权限"""
+    role: str = Field(..., description="角色标识")
+    permissions: List[str] = Field(default_factory=list, description="该角色拥有的权限清单")
+
+
+class RegisterData(BaseModel):
+    """注册成功的业务数据"""
+    user_id: int = Field(..., description="新用户 ID")
+    username: str = Field(..., description="用户名")
+
+
 class AuthController(BaseAuthController):
     """认证控制器 - 演示"默认认证 + 白名单跳过"策略
     
@@ -125,7 +172,7 @@ class AuthController(BaseAuthController):
         # 免验证接口（在 SKIP_AUTH_ROUTES 中已配置，无需装饰器）
         # ==============================
         
-        @self.router.post("/auth/login", summary="用户登录", response_model=dict)
+        @self.router.post("/auth/login", summary="用户登录", response_model=ApiResponse[LoginData])
         async def login(
             data: LoginRequest,
             db: AsyncSession = Depends(get_db),
@@ -163,7 +210,7 @@ class AuthController(BaseAuthController):
                 message="登录成功",
             )
         
-        @self.router.post("/auth/refresh", summary="刷新访问令牌", response_model=dict)
+        @self.router.post("/auth/refresh", summary="刷新访问令牌", response_model=ApiResponse[RefreshData])
         @skip_auth
         async def refresh_token(data: RefreshTokenRequest):
             """用 refresh_token 换取新的 access_token
@@ -182,7 +229,7 @@ class AuthController(BaseAuthController):
 
             return self.success(data=tokens, message="刷新成功")
 
-        @self.router.post("/auth/logout", summary="退出登录", response_model=dict)
+        @self.router.post("/auth/logout", summary="退出登录", response_model=ApiResponse[LogoutData])
         async def logout(request: Request):
             """退出登录
 
@@ -199,7 +246,7 @@ class AuthController(BaseAuthController):
                 data={"blacklisted": bool(token and TOKEN_BLACKLIST_ENABLED)},
             )
 
-        @self.router.get("/auth/permissions", summary="获取当前用户权限", response_model=dict)
+        @self.router.get("/auth/permissions", summary="获取当前用户权限", response_model=ApiResponse[PermissionsData])
         async def get_my_permissions(request: Request):
             """返回当前登录用户的角色与权限清单
 
@@ -218,7 +265,7 @@ class AuthController(BaseAuthController):
                 }
             )
 
-        @self.router.post("/auth/register", summary="用户注册", response_model=dict)
+        @self.router.post("/auth/register", summary="用户注册", response_model=ApiResponse[RegisterData])
         @skip_auth
         async def register(
             data: RegisterRequest,

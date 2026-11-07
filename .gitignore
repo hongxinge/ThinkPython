@@ -183,3 +183,7 @@ uploads/files/*
 !uploads/images/.gitkeep
 !uploads/documents/.gitkeep
 !uploads/files/.gitkeep
+
+# 生成的产物（随时可由 think.py 重新生成，不入库）
+/client/
+/openapi.json

@@ -215,6 +215,52 @@ python -m pytest tests/ -q
 相关新增模块：`core/context.py`（request_id 上下文）、`core/error_codes.py`（业务码表与 HTTP 映射）、
 `core/token_state.py`（版本校验，缓存加速）、`helpers/net.py`（可信代理 IP）。
 
+### Wave 6 补充落地（开发者接入体验）
+
+框架的用户是**写业务的人**。本轮的判断标准只有一条：新接入一个客户端要花多久。
+
+| 能力 | 实现 | 解决的问题 |
+|---|---|---|
+| 契约导出 | `think.py openapi`，直接调用 `app.openapi()` | 生产关闭 schema 端点后仍能生成 SDK，不必为工具放开安全边界 |
+| 契约体检 | 识别响应类型退化、缺 summary、写操作缺请求体 | 把「客户端拿不到类型」这类隐性成本显性化，能直接指导修改 |
+| SDK 生成 | `think.py make-client --lang ts` | 客户端不必再手写请求封装、刷新重试、错误分支 |
+| 泛型响应模型 | `core/schema.py` 的 `ApiResponse[T]` / `PageData[T]` | 统一响应包终于能表达 `data` 的具体类型，SDK 从 `unknown` 变成强类型 |
+| 响应压缩 | GZip，注册在**最内层** | 实测超时压缩 81%；小响应与已压缩类型自动跳过 |
+
+#### D7 响应模型：用泛型包装替代 `response_model=dict` · 已定
+
+`self.success()` 返回 `{code, message, data}`，此前所有路由都写 `response_model=dict`，
+OpenAPI 里只有 `additionalProperties: true`，客户端类型只能是 `unknown`。
+
+改为 `response_model=ApiResponse[LoginData]` 后，FastAPI 生成 `ApiResponse_LoginData_`，
+SDK 生成器识别这一层包装并抽取 `data` 类型（避免 `ApiResponse<ApiResponse<T>>`）。
+
+**渐进式落地**：不强制一次性改完。未声明 `response_model` 的接口照常工作，
+体检报告会如实列出数量。`auth` 与 `admin` 控制器已作为示范迁移。
+
+**一个必须知道的副作用**：声明 `response_model` 后 FastAPI 会按模型过滤字段。
+若发现「接口明明返回了、客户端收不到」，先检查模型定义是否漏字段。
+
+#### D8 压缩位置：中间件最内层 · 已定
+
+Starlette 的 `GZipMiddleware` 只在收到「单次完整 body」时才比较 `minimum_size`。
+一旦外层存在 `BaseHTTPMiddleware`（日志、认证、幂等），响应会被转成流式分块，
+此时 GZip **无条件压缩**——实测 87 字节的 `/health` 被压成 106 字节，反向浪费。
+
+因此压缩注册在最内层（紧贴路由），拿到原始响应，门限才真正生效。
+代价是中间件自身生成的响应（401/429）不压缩，但它们本来就小，影响可忽略。
+
+如果将来把日志/认证改成纯 ASGI 中间件（可省掉 `BaseHTTPMiddleware` 的流包装开销），
+压缩就可以安全地移回外层，届时需重新验证门限行为。
+
+#### D9 SQLite 生产可用性 · 已定
+
+SQLite 的默认配置不适合并发服务：`foreign_keys` 默认 **OFF**（约束形同虚设）、
+`journal_mode=delete`（读写互斥）、`busy_timeout=0`（并发写立即报错）。
+
+框架在文件库连接建立时统一下发 `WAL / NORMAL / foreign_keys=ON / busy_timeout=5000`。
+内存库（`:memory:`）不支持 WAL，自动跳过。
+
 ---
 
 ## 9. 变更纪律

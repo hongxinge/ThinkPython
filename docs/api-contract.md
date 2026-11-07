@@ -339,6 +339,42 @@ Authorization: Bearer <access_token>
 
 ## 9. 客户端接入清单（可直接照做）
 
+### 9.1 先试自动生成，再考虑手写
+
+框架可以从 OpenAPI 契约直接生成 TypeScript 客户端，上面这些封装逻辑
+（刷新串行化、幂等重试、请求追踪、错误分类）都已经内置：
+
+```bash
+python think.py make-client --lang ts --out client --base-url https://api.example.com
+cd client && npm install && npm run typecheck
+```
+
+```ts
+import { HttpClient, api, ApiError, NetworkError } from './client/src'
+
+const http = new HttpClient({
+  baseUrl: 'https://api.example.com',
+  getAccessToken: () => storage.get('access_token'),
+  getRefreshToken: () => storage.get('refresh_token'),
+  onTokenRefreshed: (t) => {
+    storage.set('access_token', t.accessToken)
+    storage.set('refresh_token', t.refreshToken)  // 轮换后必须更新，否则下次刷新失败
+  },
+  onUnauthorized: () => redirectToLogin(),
+})
+
+const res = await api.postApiAuthLogin(http, { username, password })
+// res.data 的字段与类型由服务端 response_model 决定
+```
+
+生成的类型精度取决于服务端契约。可以用体检命令确认：
+
+```bash
+python think.py openapi      # 会列出「响应类型是任意对象」的接口
+```
+
+### 9.2 手写封装（不使用生成器时）
+
 ```ts
 // 1) 统一请求封装
 async function request(path, options = {}, retried = false) {

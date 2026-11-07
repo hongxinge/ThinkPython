@@ -131,23 +131,42 @@ def create_app() -> FastAPI:
         version=APP_CONFIG["version"],  # 应用版本号
         debug=APP_CONFIG["debug"],  # 调试模式
         lifespan=lifespan,  # 绑定生命周期管理器
-        # 仅在调试模式下启用 API 文档（Swagger UI 和 ReDoc）
-        # 生产环境关闭文档接口，防止暴露 API 结构
+        # 仅在调试模式下启用交互式 API 文档（Swagger UI 和 ReDoc）
+        # 生产环境默认关闭文档页面，防止暴露 API 结构
         docs_url="/docs" if APP_CONFIG["debug"] else None,
         redoc_url="/redoc" if APP_CONFIG["debug"] else None,
+        # schema 端点独立开关：客户端团队需要用 /openapi.json 生成 SDK，
+        # 因此默认与 debug 同步，但允许通过 OPENAPI_ENABLED 单独打开或关闭。
+        # 关闭后 think.py openapi / make-client 仍可工作（直接调用 app.openapi()）。
+        openapi_url="/openapi.json" if APP_CONFIG["openapi_enabled"] else None,
     )
     
     # ===== 配置中间件 =====
     # 注意：FastAPI/Starlette 中间件的执行顺序与注册顺序相反（后注册的在最外层、最先执行）。
-    # 期望的执行顺序（从外到内）：请求日志 -> CORS -> 限流 -> 认证 -> 幂等 -> 路由
+    # 期望的执行顺序（从外到内）：GZip -> 请求日志 -> CORS -> 限流 -> 认证 -> 幂等 -> 路由
     # 这样设计可确保：
     #   1. CORS 在认证之外：浏览器跨域预检请求(OPTIONS)不会被认证拦截，
     #      401/429 等错误响应也会携带 CORS 头，前端能正常读取错误信息
     #   2. 限流在认证之外：登录等免认证接口同样受到限流保护（防暴力破解）
-    #   3. 请求日志在最外层：所有请求（含被中间件拦截的请求）都会被记录
+    #   3. 请求日志在外层：所有请求（含被中间件拦截的请求）都会被记录
     #   4. 幂等在认证之内：需要读取 request.state.current_user 做用户维度隔离，
     #      且认证失败的请求不应写入幂等缓存
-    app.middleware("http")(idempotency_middleware)  # 幂等键（最内层）
+    #
+    # 压缩为什么放在最内层（最先注册）：
+    # Starlette 的 GZipMiddleware 只在收到「单次完整 body」时才比较 minimum_size；
+    # 一旦外层有 BaseHTTPMiddleware（日志/认证/幂等），响应就会变成流式分块，
+    # 此时 GZip 会跳过尺寸判断、无条件压缩——87 字节的 /health 会被压成 106 字节。
+    # 放在最内层紧贴路由，能拿到原始响应，minimum_size 才真正生效。
+    if APP_CONFIG["gzip"]["enabled"]:
+        from starlette.middleware.gzip import GZipMiddleware
+
+        app.add_middleware(
+            GZipMiddleware,
+            minimum_size=APP_CONFIG["gzip"]["minimum_size"],
+            compresslevel=APP_CONFIG["gzip"]["compresslevel"],
+        )
+
+    app.middleware("http")(idempotency_middleware)  # 幂等键（认证之内）
     app.middleware("http")(auth_middleware)  # 全局认证中间件
     setup_rate_limit(app)  # API 限流中间件
     setup_cors(app)  # CORS 跨域中间件

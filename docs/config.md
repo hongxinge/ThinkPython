@@ -22,6 +22,10 @@
 | `LANGUAGE` | 语言 | `zh-CN` |
 | `ERROR_HTTP_MODE` | 错误响应契约 | `standard` |
 | `TRUST_PROXY` | 是否采信代理传来的真实 IP | `false` |
+| `OPENAPI_ENABLED` | 是否暴露 `/openapi.json` | 跟随 `APP_DEBUG` |
+| `GZIP_ENABLED` | 是否启用响应压缩 | `true` |
+| `GZIP_MINIMUM_SIZE` | 小于该字节数不压缩 | `1024` |
+| `GZIP_COMPRESS_LEVEL` | 压缩级别 1-9 | `6` |
 
 `TRUST_PROXY` 说明：
 
@@ -36,6 +40,36 @@
 
 `APP_DEBUG=False` 时会同时：关闭 `/docs` 与 `/redoc`、隐藏异常堆栈、
 在检测到默认 `JWT_SECRET` 时**拒绝启动**。
+
+### 响应压缩
+
+对 App / 小程序这类移动端是刚需：JSON 列表接口实测压缩率 **80% 左右**。
+
+```env
+GZIP_ENABLED=true
+GZIP_MINIMUM_SIZE=1024
+GZIP_COMPRESS_LEVEL=6
+```
+
+几点实现细节值得知道：
+
+- 图片、视频、zip、PDF、SSE 会被自动跳过，不会浪费 CPU 去压缩已压缩的内容；
+- 超过 128KB 的响应在线程池里压缩，不阻塞事件循环；
+- 小于 `GZIP_MINIMUM_SIZE` 的响应原样返回。**这条容易被中间件顺序破坏**：
+  Starlette 只在收到「单次完整 body」时才比较尺寸，一旦响应被
+  `BaseHTTPMiddleware` 转成流式分块就会无条件压缩。因此压缩中间件注册在
+  最内层（紧贴路由），详见 `main.py` 中 `create_app()` 的注释。
+
+### OpenAPI 与客户端 SDK
+
+`OPENAPI_ENABLED` 只控制 HTTP 端点，**不影响**命令行导出：
+
+```bash
+python think.py openapi              # 导出 openapi.json（生产环境也可用）
+python think.py make-client          # 生成 TypeScript 客户端
+```
+
+所以生产环境可以放心设 `OPENAPI_ENABLED=false`，SDK 仍能在构建机或本地生成。
 
 ---
 
@@ -158,6 +192,17 @@ DB_PASSWORD=123456
 DB_TYPE=sqlite
 DB_SQLITE_PATH=./data/database.db
 ```
+
+**框架对 SQLite 文件库自动下发的 PRAGMA**（无需手工配置）：
+
+| PRAGMA | 默认值 | 框架设置 | 影响 |
+|---|---|---|---|
+| `journal_mode` | `delete` | `wal` | 读写不互相阻塞，并发请求不再整库排队 |
+| `synchronous` | `FULL` | `NORMAL` | 配合 WAL 仍保证崩溃一致性，写入快数倍 |
+| `foreign_keys` | **`OFF`** | `ON` | SQLite 默认不校验外键，不打开则约束形同虚设 |
+| `busy_timeout` | `0` | `5000` | 并发写入时等待而非直接报 `database is locked` |
+
+内存库（`:memory:`）不支持 WAL，会被自动跳过。
 
 ---
 

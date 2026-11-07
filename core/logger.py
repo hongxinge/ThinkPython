@@ -83,12 +83,15 @@ def setup_logging(level: Optional[str] = None) -> None:
     # 先设定时区 patcher，再注册 handler，确保首个日志就用正确时区
     logger.configure(patcher=_make_patcher(tzinfo))
 
-    # 控制台输出：始终启用，容器环境由 stdout/stderr 采集
+    # 控制台输出走 stderr，而不是 stdout。
+    # 理由：CLI 的数据输出必须干净——`think.py openapi --stdout | jq`
+    # 这类管道一旦混入日志行就直接解析失败。日志走 stderr 是 Unix 惯例，
+    # 容器与 k8s 同时采集 stdout/stderr，不影响日志收集。
     logger.add(
-        sys.stdout,
+        sys.stderr,
         level=log_level,
         format=_CONSOLE_FORMAT,
-        colorize=sys.stdout.isatty(),
+        colorize=sys.stderr.isatty(),
         backtrace=APP_CONFIG.get("debug", False),
         diagnose=APP_CONFIG.get("debug", False),
         enqueue=False,  # 控制台为同步输出，避免日志顺序错乱

@@ -26,7 +26,7 @@ bind = os.getenv("GUNICORN_BIND", "0.0.0.0:8000")
 
 # Worker 进程数
 # 默认公式：CPU 核心数 × 2 + 1
-# 容器环境中 cpu_count() 可能读到宿主机核数，务必用 GUNICORN_WORKERS 显式指定。
+# 生产建议用 GUNICORN_WORKERS 显式指定，便于按内存与数据库连接上限规划。
 # 参考：2 核 4G 机器建议 4；4 核 8G 建议 9。
 workers = int(os.getenv("GUNICORN_WORKERS", str(multiprocessing.cpu_count() * 2 + 1)))
 

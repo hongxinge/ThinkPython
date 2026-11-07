@@ -1,8 +1,9 @@
 -- ThinkPython MySQL 初始化脚本
 --
--- 执行时机：MySQL 官方镜像首次初始化数据目录时（/docker-entrypoint-initdb.d/）
--- 只在数据卷为空时执行一次；已存在 db-data 卷时修改本文件不会生效。
--- 需要重新初始化时：docker compose down -v && docker compose up -d
+-- 执行时机：MySQL 首次部署后，用 root 手工执行一次（幂等，可重复执行）
+--   mysql -u root -p < deploy/mysql-init.sql
+-- 注意：SET GLOBAL 只影响当前运行实例，重启后失效；
+-- 需要长期生效请把这些参数写入 my.cnf 的 [mysqld] 段。
 
 -- ==============================
 -- 数据库与字符集
@@ -31,14 +32,15 @@ SET GLOBAL slow_query_log = 'ON';
 SET GLOBAL long_query_time = 1;
 
 -- ==============================
--- 应用专用账号（可选，推荐生产启用）
+-- 应用专用账号（生产必须启用）
 -- ==============================
--- 应用不应直接使用 root。启用时同步修改 .env 的 DB_USER / DB_PASSWORD。
--- 注意：密码请使用强随机值，不要提交到版本库。
+-- 应用不应直接使用 root。取消下面几行注释、改成强随机密码，
+-- 并同步修改 .env 的 DB_USER / DB_PASSWORD。
+-- 应用与 MySQL 不同机时，把 'localhost' 改成具体内网网段（如 '10.0.0.%'）。
 --
--- CREATE USER IF NOT EXISTS 'thinkpython'@'%' IDENTIFIED BY 'CHANGE_ME_STRONG_PASSWORD';
+-- CREATE USER IF NOT EXISTS 'thinkpython'@'localhost' IDENTIFIED BY 'CHANGE_ME_STRONG_PASSWORD';
 -- GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX, REFERENCES
---     ON `thinkpython`.* TO 'thinkpython'@'%';
+--     ON `thinkpython`.* TO 'thinkpython'@'localhost';
 -- FLUSH PRIVILEGES;
 
 -- ==============================

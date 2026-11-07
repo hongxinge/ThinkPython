@@ -241,9 +241,9 @@ class FileUtil:
     def build_url(cls, subdir: str, filename: str) -> str:
         """构造对外访问 URL
 
-        为什么不直接用磁盘相对路径：容器部署时 ``UPLOAD_DIR`` 通常是挂载卷
-        （如 ``/data/uploads``），相对路径要么拼不出来、要么把服务器绝对路径
-        暴露给客户端。URL 前缀与磁盘位置解耦后，两边可以各自变化。
+        为什么不直接用磁盘相对路径：生产环境 ``UPLOAD_DIR`` 常指向项目外的
+        独立数据盘（如 ``/data/uploads``），相对路径要么拼不出来、要么把服务器
+        绝对路径暴露给客户端。URL 前缀与磁盘位置解耦后，两边可以各自变化。
 
         Args:
             subdir: ``generate_subdir`` 产出的分类/日期子目录
@@ -455,7 +455,7 @@ class FileUtil:
         if upload_dir is None:
             target_dir = cls.get_upload_root() / subdir
         else:
-            # 允许自定义绝对目录（如容器挂载卷）；相对路径统一以项目根为基准
+            # 允许自定义绝对目录（如独立数据盘挂载点）；相对路径统一以项目根为基准
             candidate = Path(upload_dir)
             target_dir = candidate if candidate.is_absolute() else (cls.PROJECT_ROOT / candidate)
             target_dir = target_dir.resolve()

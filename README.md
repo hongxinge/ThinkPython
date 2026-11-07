@@ -276,10 +276,11 @@ ThinkPython 支持多种部署方式，按需选择：
 | 部署方式 | 适用场景 | 说明 |
 |---------|---------|------|
 | Uvicorn | 小型项目 | `uvicorn main:app --host 0.0.0.0 --port 8000` |
-| Gunicorn | 中型项目 | `gunicorn -c deploy/gunicorn.conf.py main:app -k uvicorn.workers.UvicornWorker` |
-| Docker Compose | 生产环境 | `cd deploy && docker compose up -d --build` |
+| Gunicorn | 中型项目 | `gunicorn -c deploy/gunicorn.conf.py main:app` |
+| Gunicorn + systemd | 生产常驻（推荐） | `sudo systemctl enable --now thinkpython` |
 
-完整的部署配置示例请参考 `deploy/` 目录，包含 Dockerfile、docker-compose.yml、Gunicorn 配置、Nginx 配置等。
+完整的部署配置请参考 `deploy/` 目录，包含 Gunicorn 配置、systemd 服务单元、
+Nginx 反向代理与 SSL 示例、MySQL 初始化脚本。详见 [部署指南](deploy/README.md)。
 
 ---
 

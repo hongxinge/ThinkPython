@@ -194,7 +194,7 @@ python -m pytest tests/ -q
 - `MEMCACHED_*` 移除：只支持 `memory` / `redis`，非法值启动即报错并提示可选值；
 - `allowed_mime_types` 接入 `FileUtil.upload`；文件大小校验改用 `file.size`，避免整块读入内存；
 - 限流路径匹配修正：`/auth/login` 现在能命中 `/api/auth/login`，登录/注册限流真正生效；
-- 部署：根级 `.dockerignore`、`mysql-init.sql`、`ssl/`、compose 的 env_file 与上传卷共享、`requirements-prod.txt`。
+- 部署（裸机）：`deploy/` 下的 Gunicorn 配置、systemd 单元、Nginx/SSL 示例、`mysql-init.sql`、`requirements-prod.txt`。
 
 ### Wave 4 补充落地（客户端 API 契约）
 
@@ -321,7 +321,7 @@ SQLite 的默认配置不适合并发服务：`foreign_keys` 默认 **OFF**（�
 
 上传返回的 `url` 由 `UPLOAD_URL_PREFIX` 拼接，不再用磁盘相对路径。
 
-原实现下，当 `UPLOAD_DIR` 是容器挂载卷（如 `/data/uploads`）时，
+原实现下，当 `UPLOAD_DIR` 指向项目外目录（如 `/data/uploads`）时，
 `relative_to(PROJECT_ROOT)` 失败会退回绝对路径，
 产出 `/C:/Users/.../uploads/files/...` 或 `/data/uploads/...`——
 既泄漏服务器目录结构，客户端也访问不到。

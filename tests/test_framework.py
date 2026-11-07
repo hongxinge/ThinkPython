@@ -354,8 +354,10 @@ class TestIntegration:
         deploy_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "deploy")
         assert os.path.exists(deploy_dir)
         assert os.path.exists(os.path.join(deploy_dir, "README.md"))
-        assert os.path.exists(os.path.join(deploy_dir, "Dockerfile"))
-        assert os.path.exists(os.path.join(deploy_dir, "docker-compose.yml"))
+        assert os.path.exists(os.path.join(deploy_dir, "gunicorn.conf.py"))
+        assert os.path.exists(os.path.join(deploy_dir, "thinkpython.service"))
+        assert os.path.exists(os.path.join(deploy_dir, "nginx.conf"))
+        assert os.path.exists(os.path.join(deploy_dir, "mysql-init.sql"))
 
     def test_alembic_directory_exists(self):
         """测试 alembic 目录存在"""

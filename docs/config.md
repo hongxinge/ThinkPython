@@ -137,7 +137,7 @@ DEFAULT_MODULE=api
 
 日志行为（由 `core/logger.py` 统一配置）：
 
-- **控制台**：输出到 stdout，容器环境由平台采集；
+- **控制台**：输出到 stdout，可交由 systemd / 进程管理器采集；
 - **文件**：`logs/app.log`，按 10MB 轮转，保留 5 份，异步写入不阻塞事件循环；
 - **时区**：按 `TIMEZONE` 渲染，与数据库时间口径一致；
 - **降级**：日志目录不可写时自动仅用控制台，不影响服务启动。
@@ -320,7 +320,7 @@ MEMORY_CACHE_TTL=300
 
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
-| `UPLOAD_DIR` | 上传根目录，可设绝对路径（容器挂载卷） | `uploads` |
+| `UPLOAD_DIR` | 上传根目录，可设绝对路径（如独立数据盘） | `uploads` |
 | `UPLOAD_URL_PREFIX` | 对外访问的 URL 前缀 | `/uploads` |
 | `UPLOAD_MAX_FILE_SIZE` | 普通上传单文件上限（字节） | `10485760`（10MB） |
 | `UPLOAD_NAMING_RULE` | 命名规则 `uuid` / `timestamp` / `original` | `uuid` |
@@ -336,7 +336,7 @@ MEMORY_CACHE_TTL=300
 上传接口返回的 `url` **不是**由磁盘路径拼出来的，而是
 `{UPLOAD_URL_PREFIX}/{分类}/{日期}/{文件名}`。
 
-原因是容器部署时两者天然不同：
+原因是磁盘位置与对外 URL 天然可能不同（如上传目录挂在独立数据盘）：
 
 ```env
 # 磁盘在挂载卷，对外仍是 /uploads/...

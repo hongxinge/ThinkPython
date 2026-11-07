@@ -1,0 +1,37 @@
+[Unit]
+Description=ThinkPython API Server
+Documentation=file:/opt/thinkpython/deploy/README.md
+After=network-online.target mysql.service redis-server.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=thinkpython
+Group=thinkpython
+WorkingDirectory=/opt/thinkpython
+
+# 生产配置；文件不存在时不报错（也可改用 Environment= 直接注入）
+EnvironmentFile=-/opt/thinkpython/.env
+
+# 迁移不放在这里：失败会让服务反复重启。发布流程里单独执行 db-migrate。
+ExecStart=/opt/thinkpython/.venv/bin/gunicorn -c deploy/gunicorn.conf.py main:app
+ExecReload=/bin/kill -s HUP $MAINPID
+KillSignal=SIGTERM
+TimeoutStopSec=30
+Restart=always
+RestartSec=5
+
+# 最小权限：不可提权、独立 /tmp、系统目录只读、只放开日志与上传目录
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/opt/thinkpython/logs /opt/thinkpython/uploads
+
+# 日志交给 journald：journalctl -u thinkpython -f
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

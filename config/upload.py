@@ -26,7 +26,7 @@ UPLOAD_CONFIG = {
 
     # 对外访问的 URL 前缀
     # 上传接口返回的 url 由此前缀 + 分类 + 日期 + 文件名拼接，
-    # 与磁盘真实位置解耦：容器里 UPLOAD_DIR 可能是 /data/uploads（挂载卷），
+    # 与磁盘真实位置解耦：生产里 UPLOAD_DIR 可能是 /data/uploads（独立数据盘），
     # 但对外仍应暴露为 /uploads/...，由 Nginx 映射到该目录。
     # 若由对象存储/CDN 提供访问，把它改成对应域名即可。
     "url_prefix": os.getenv("UPLOAD_URL_PREFIX", "/uploads"),

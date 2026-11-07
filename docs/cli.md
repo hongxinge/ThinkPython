@@ -219,7 +219,7 @@ python think.py db-migrate --current
 
 行为保证：
 
-- **失败即非零退出码**：迁移出错时命令返回 1，CI / 容器编排不会把失败当成功；
+- **失败即非零退出码**：迁移出错时命令返回 1，发布脚本与 CI 不会把失败当成功；
 - **模型导入失败即中止**：避免静默漏表（确需忽略时设 `ALEMBIC_ALLOW_MODEL_IMPORT_ERRORS=true`）；
 - **SQLite batch 模式**：改字段时自动重建表，解决 SQLite 不支持 `ALTER COLUMN` 的限制。
 

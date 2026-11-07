@@ -419,7 +419,7 @@ class ChunkedUploadManager:
         try:
             relative_path = target.relative_to(FileUtil.PROJECT_ROOT).as_posix()
         except ValueError:
-            # 上传目录位于项目外（容器挂载卷）时返回绝对路径
+            # 上传目录位于项目外（独立数据盘）时返回绝对路径
             relative_path = target.as_posix()
 
         result = {
@@ -430,7 +430,7 @@ class ChunkedUploadManager:
             "file_size": total_written,
             "mime_type": FileUtil.get_mime_type(filename),
             "extension": Path(filename).suffix.lower(),
-            # URL 与磁盘位置解耦，容器挂载卷下也不会暴露绝对路径
+            # URL 与磁盘位置解耦，目录在项目外时也不会暴露绝对路径
             "url": FileUtil.build_url(subdir, filename),
         }
 

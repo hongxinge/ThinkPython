@@ -33,12 +33,12 @@ from contextlib import asynccontextmanager
 from loguru import logger
 
 from config.app import APP_CONFIG
-from middleware import setup_cors, request_log_middleware
-from middleware.idempotency import idempotency_middleware
+from middleware import RequestLogMiddleware, setup_cors
+from middleware.idempotency import IdempotencyMiddleware
 from middleware.ratelimit import setup_rate_limit
 from core.database import init_database, close_database
 from core.cache import init_cache, close_cache
-from core.auth_middleware import auth_middleware
+from core.auth_middleware import AuthMiddleware
 from core.exception import (
     app_exception_handler,
     validation_exception_handler,
@@ -145,32 +145,33 @@ def create_app() -> FastAPI:
     # 注意：FastAPI/Starlette 中间件的执行顺序与注册顺序相反（后注册的在最外层、最先执行）。
     # 期望的执行顺序（从外到内）：GZip -> 请求日志 -> CORS -> 限流 -> 认证 -> 幂等 -> 路由
     # 这样设计可确保：
-    #   1. CORS 在认证之外：浏览器跨域预检请求(OPTIONS)不会被认证拦截，
+    #   1. 压缩在最外层：所有响应（含中间件自身产生的 401/429）都能按尺寸决定是否压缩
+    #   2. CORS 在认证之外：浏览器跨域预检请求(OPTIONS)不会被认证拦截，
     #      401/429 等错误响应也会携带 CORS 头，前端能正常读取错误信息
-    #   2. 限流在认证之外：登录等免认证接口同样受到限流保护（防暴力破解）
-    #   3. 请求日志在外层：所有请求（含被中间件拦截的请求）都会被记录
-    #   4. 幂等在认证之内：需要读取 request.state.current_user 做用户维度隔离，
+    #   3. 限流在认证之外：登录等免认证接口同样受到限流保护（防暴力破解）
+    #   4. 请求日志在外层：所有请求（含被中间件拦截的请求）都会被记录
+    #   5. 幂等在认证之内：需要读取 current_user 做用户维度隔离，
     #      且认证失败的请求不应写入幂等缓存
     #
-    # 压缩为什么放在最内层（最先注册）：
-    # Starlette 的 GZipMiddleware 只在收到「单次完整 body」时才比较 minimum_size；
-    # 一旦外层有 BaseHTTPMiddleware（日志/认证/幂等），响应就会变成流式分块，
-    # 此时 GZip 会跳过尺寸判断、无条件压缩——87 字节的 /health 会被压成 106 字节。
-    # 放在最内层紧贴路由，能拿到原始响应，minimum_size 才真正生效。
+    # 为什么全部用 add_middleware 而不是 app.middleware("http")(fn)：
+    # 函数式中间件底层是 BaseHTTPMiddleware，会把响应包进 anyio 内存流逐块转发。
+    # 那样每个请求多一次拷贝，且 GZipMiddleware 只在收到「单次完整 body」时才比较
+    # minimum_size，流式响应会被无条件压缩——87 字节的 /health 会被压成 106 字节，
+    # 越压越大。改纯 ASGI 后响应保持原始形态，门限才真正生效。
+    app.add_middleware(IdempotencyMiddleware)  # 幂等键（最内层）
+    app.add_middleware(AuthMiddleware)  # 全局认证中间件
+    setup_rate_limit(app)  # API 限流中间件
+    setup_cors(app)  # CORS 跨域中间件
+    app.add_middleware(RequestLogMiddleware)  # 请求日志中间件
+
     if APP_CONFIG["gzip"]["enabled"]:
         from starlette.middleware.gzip import GZipMiddleware
 
         app.add_middleware(
-            GZipMiddleware,
+            GZipMiddleware,  # 最外层
             minimum_size=APP_CONFIG["gzip"]["minimum_size"],
             compresslevel=APP_CONFIG["gzip"]["compresslevel"],
         )
-
-    app.middleware("http")(idempotency_middleware)  # 幂等键（认证之内）
-    app.middleware("http")(auth_middleware)  # 全局认证中间件
-    setup_rate_limit(app)  # API 限流中间件
-    setup_cors(app)  # CORS 跨域中间件
-    app.middleware("http")(request_log_middleware)  # 请求日志中间件（最外层）
     
     # ===== 注册异常处理器 =====
     # 处理自定义应用异常（AppException 及其子类）

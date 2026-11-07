@@ -313,3 +313,54 @@ MEMORY_CACHE_TTL=300
 
 局限：未实现并发锁，同一 key 的请求**同时**到达仍可能都执行一次；
 支付/扣库存等强一致场景需在数据库层加唯一约束兜底。
+
+---
+
+## 文件上传
+
+| 变量 | 说明 | 默认值 |
+|------|------|--------|
+| `UPLOAD_DIR` | 上传根目录，可设绝对路径（容器挂载卷） | `uploads` |
+| `UPLOAD_URL_PREFIX` | 对外访问的 URL 前缀 | `/uploads` |
+| `UPLOAD_MAX_FILE_SIZE` | 普通上传单文件上限（字节） | `10485760`（10MB） |
+| `UPLOAD_NAMING_RULE` | 命名规则 `uuid` / `timestamp` / `original` | `uuid` |
+| `UPLOAD_CHUNKED_ENABLED` | 是否启用分片上传 | `true` |
+| `UPLOAD_CHUNKED_PREFERRED_SIZE` | 服务端推荐分片大小 | `2097152`（2MB） |
+| `UPLOAD_CHUNKED_MAX_CHUNK_SIZE` | 单分片上限 | `8388608`（8MB） |
+| `UPLOAD_CHUNKED_MAX_TOTAL_SIZE` | 分片上传文件总上限 | `2147483648`（2GB） |
+| `UPLOAD_CHUNKED_MAX_CHUNKS` | 分片数量上限 | `10000` |
+| `UPLOAD_CHUNKED_SESSION_TTL` | 会话有效期（秒） | `86400`（24 小时） |
+
+### `UPLOAD_DIR` 与 `UPLOAD_URL_PREFIX` 为什么要分开
+
+上传接口返回的 `url` **不是**由磁盘路径拼出来的，而是
+`{UPLOAD_URL_PREFIX}/{分类}/{日期}/{文件名}`。
+
+原因是容器部署时两者天然不同：
+
+```env
+# 磁盘在挂载卷，对外仍是 /uploads/...
+UPLOAD_DIR=/data/uploads
+UPLOAD_URL_PREFIX=/uploads
+```
+
+如果直接用磁盘相对路径，会得到 `/data/uploads/files/...` 这类客户端无法访问的地址，
+甚至把服务器目录结构暴露出去。
+
+### 分片上传的临时目录
+
+未合并的分片放在 `{UPLOAD_DIR}/.chunks/{upload_id}/`，每个会话一个目录：
+`meta.json` 记录总分片数与已收索引，`N.part` 是分片内容。
+
+两点必须知道：
+
+1. **不要对外暴露 `.chunks`**。Nginx 示例已加 `location ^~ /uploads/.chunks/ { return 404; }`，
+   自建服务器请照做，否则未合并的分片可被直接下载；
+2. **过期会话自动清理**：每次调用 `init` 都会顺带扫描并删除超过
+   `UPLOAD_CHUNKED_SESSION_TTL` 的会话，不需要额外定时任务。
+
+### 分片上传会放大请求量
+
+一次 100MB 上传按 2MB 分片是 50 个请求。如果启用了 IP 限流
+（`RATE_LIMIT_IP_REQUESTS` 默认 100/60s），大文件上传可能被限流拦截。
+建议对上传路径单独放宽或排除，例如把 IP 限流调高到 `600/60s`。

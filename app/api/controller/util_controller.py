@@ -39,10 +39,84 @@ from typing import List, Optional
 from pathlib import Path
 
 from fastapi import UploadFile, File, HTTPException, Query
+from pydantic import BaseModel, Field
 
 from core.base_controller import BaseController
+from core.schema import ApiResponse
+from utils.chunked_upload import ChunkedUploadError, ChunkedUploadManager
 from utils.excel import ExcelUtil
 from utils.file import FileUtil, IMAGE_EXTENSIONS, DOCUMENT_EXTENSIONS
+
+
+# ==============================
+# 分片上传请求/响应模型
+# ==============================
+
+class ChunkedInitRequest(BaseModel):
+    """初始化分片上传请求体"""
+
+    filename: str = Field(
+        ..., description="原始文件名，用于取扩展名与回显", min_length=1, max_length=255
+    )
+    total_size: int = Field(..., gt=0, description="文件总字节数")
+    chunk_size: Optional[int] = Field(
+        None, gt=0, description="分片大小；不传则用服务端推荐值"
+    )
+    category: str = Field("files", description="文件分类：images/documents/files/videos")
+
+
+class ChunkedInitData(BaseModel):
+    """初始化结果"""
+
+    upload_id: str = Field(..., description="会话 ID，后续所有接口都要带上")
+    chunk_size: int = Field(..., description="分片大小（字节）")
+    total_chunks: int = Field(..., description="分片总数")
+    expires_in: int = Field(..., description="会话有效期（秒）")
+    received: List[int] = Field(default_factory=list, description="已接收的分片序号")
+
+
+class ChunkedStatusData(BaseModel):
+    """会话状态（用于断点续传）"""
+
+    upload_id: str = Field(..., description="会话 ID")
+    filename: str = Field(..., description="原始文件名")
+    total_size: int = Field(..., description="文件总字节数")
+    chunk_size: int = Field(..., description="分片大小")
+    total_chunks: int = Field(..., description="分片总数")
+    received: List[int] = Field(default_factory=list, description="已接收的分片序号")
+    missing: List[int] = Field(default_factory=list, description="仍缺失的分片序号")
+    completed: bool = Field(False, description="是否已可合并")
+
+
+class ChunkedChunkData(BaseModel):
+    """单个分片的上传结果"""
+
+    upload_id: str = Field(..., description="会话 ID")
+    index: int = Field(..., description="本次上传的分片序号")
+    received: List[int] = Field(default_factory=list, description="累计已接收的分片序号")
+    received_count: int = Field(..., description="已接收分片数量")
+    total_chunks: int = Field(..., description="分片总数")
+    completed: bool = Field(..., description="是否所有分片都已到齐")
+
+
+class ChunkedCompleteData(BaseModel):
+    """合并结果，字段与普通上传接口一致"""
+
+    filename: str = Field(..., description="服务端生成的文件名")
+    original_filename: str = Field(..., description="客户端原始文件名")
+    file_path: str = Field(..., description="相对项目根的文件路径")
+    absolute_path: str = Field(..., description="绝对路径（服务端使用）")
+    file_size: int = Field(..., description="文件字节数")
+    mime_type: str = Field(..., description="MIME 类型")
+    extension: str = Field(..., description="扩展名（含点）")
+    url: str = Field(..., description="可直接访问的 URL 路径")
+
+
+class ChunkedAbortData(BaseModel):
+    """取消上传结果"""
+
+    upload_id: str = Field(..., description="会话 ID")
+    aborted: bool = Field(..., description="是否已清理")
 
 
 def _resolve_upload_path(file_path: str) -> Path:
@@ -267,6 +341,117 @@ class UtilController(BaseController):
                 "files": results,
             })
         
+        # ==============================
+        # 分片上传接口（大文件 / 弱网断点续传）
+        # ==============================
+        # 流程：
+        #   1. POST .../chunked/init      告诉服务端文件大小，拿到 upload_id 与分片规划
+        #   2. POST .../chunked/chunk     逐片上传（可并发、可乱序、可重传）
+        #   3. GET  .../chunked/status    断线后查询缺哪些分片（可选）
+        #   4. POST .../chunked/complete  合并，返回与普通上传一致的字段
+        #   放弃时 DELETE .../chunked/{upload_id} 立即释放磁盘
+
+        @self.router.post(
+            "/util/file/chunked/init",
+            summary="初始化分片上传",
+            response_model=ApiResponse[ChunkedInitData],
+        )
+        async def chunked_init(data: ChunkedInitRequest):
+            """创建分片上传会话
+
+            服务端返回 ``upload_id`` 与建议的分片规划。客户端按 ``chunk_size``
+            切片，逐片调用 chunk 接口即可。若客户端已有更优的分片大小，
+            可在请求里指定 ``chunk_size``。
+
+            重复调用会创建新会话；断点续传请用同一个 ``upload_id`` 调 status。
+            """
+            try:
+                result = ChunkedUploadManager.init(
+                    filename=data.filename,
+                    total_size=data.total_size,
+                    chunk_size=data.chunk_size,
+                    category=data.category,
+                )
+            except ChunkedUploadError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+            return self.success(data=result)
+
+        @self.router.get(
+            "/util/file/chunked/status",
+            summary="查询分片上传状态",
+            response_model=ApiResponse[ChunkedStatusData],
+        )
+        async def chunked_status(
+            upload_id: str = Query(..., description="init 返回的 upload_id")
+        ):
+            """返回已接收与缺失的分片序号
+
+            客户端断线重连后先调本接口，只补 ``missing`` 里的分片，
+            不必从头重传。
+            """
+            try:
+                return self.success(data=ChunkedUploadManager.status(upload_id))
+            except ChunkedUploadError as exc:
+                raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+        @self.router.post(
+            "/util/file/chunked/chunk",
+            summary="上传分片",
+            response_model=ApiResponse[ChunkedChunkData],
+        )
+        async def chunked_upload_chunk(
+            file: UploadFile = File(...),
+            upload_id: str = Query(..., description="init 返回的 upload_id"),
+            index: int = Query(..., ge=0, description="分片序号，从 0 开始"),
+        ):
+            """上传单个分片
+
+            同一分片重复上传是幂等的（覆盖写），客户端重试无需特殊处理。
+            分片可以乱序、可以并发；服务端按 index 落盘，合并时按序拼接。
+            """
+            try:
+                result = await ChunkedUploadManager.save_chunk(upload_id, index, file)
+            except ChunkedUploadError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+            return self.success(data=result)
+
+        @self.router.post(
+            "/util/file/chunked/complete",
+            summary="合并分片",
+            response_model=ApiResponse[ChunkedCompleteData],
+        )
+        async def chunked_complete(
+            upload_id: str = Query(..., description="init 返回的 upload_id")
+        ):
+            """合并所有分片为最终文件
+
+            返回结构与普通上传接口完全一致，客户端处理方式无需区分。
+            合并成功后会删除临时分片；分片缺失时返回 400 并列出缺口，
+            客户端补传后重试即可。
+            """
+            try:
+                result = ChunkedUploadManager.complete(upload_id)
+            except ChunkedUploadError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+            return self.success(data=result, message="上传完成")
+
+        @self.router.delete(
+            "/util/file/chunked/{upload_id}",
+            summary="取消分片上传",
+            response_model=ApiResponse[ChunkedAbortData],
+        )
+        async def chunked_abort(upload_id: str):
+            """取消上传并立即释放已占用的磁盘空间"""
+            try:
+                ChunkedUploadManager.abort(upload_id)
+            except ChunkedUploadError as exc:
+                raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+            return self.success(data={"upload_id": upload_id, "aborted": True})
+
         # ==============================
         # 文件下载相关接口
         # ==============================

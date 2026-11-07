@@ -322,6 +322,73 @@ Authorization: Bearer <access_token>
 
 ---
 
+## 7.2 大文件分片上传
+
+单次 `multipart/form-data` 上传大文件，一旦网络抖动就要从头再来。
+分片上传把文件切开，断线后只补缺失部分。
+
+### 流程
+
+| 步骤 | 接口 | 说明 |
+|---|---|---|
+| 1 | `POST /util/file/chunked/init` | 告知文件大小，拿到 `upload_id` 与分片规划 |
+| 2 | `POST /util/file/chunked/chunk` | 逐片上传，可乱序、可并发、可重传 |
+| 3 | `GET /util/file/chunked/status` | 断线后查询缺哪些分片 |
+| 4 | `POST /util/file/chunked/complete` | 合并，返回与普通上传一致的字段 |
+| — | `DELETE /util/file/chunked/{upload_id}` | 放弃上传，立即释放磁盘 |
+
+### 示例
+
+```ts
+// 1) 初始化
+const init = await api.postApiUtilFileChunkedInit(http, {
+  filename: 'video.mp4',
+  total_size: file.size,
+  category: 'videos',
+})
+const { upload_id, chunk_size, total_chunks } = init.data
+
+// 2) 并发上传（建议 3-4 并发，避免把带宽和文件句柄打满）
+const concurrency = 3
+let cursor = 0
+await Promise.all(
+  Array.from({ length: concurrency }, async () => {
+    while (cursor < total_chunks) {
+      const index = cursor++
+      const blob = file.slice(index * chunk_size, (index + 1) * chunk_size)
+      await uploadChunk(upload_id, index, blob)   // 失败可按指数退避重试
+    }
+  }),
+)
+
+// 3) 合并
+const done = await api.postApiUtilFileChunkedComplete(http, undefined, {
+  params: { upload_id },
+})
+// done.data.url 即最终文件地址
+```
+
+### 行为约定
+
+- **分片大小必须精确**：除最后一片外，每片都必须等于 `chunk_size`；
+  最后一片是剩余字节数。大小不符会返回 400，不会静默接受。
+- **重传幂等**：同一 `index` 重复上传是覆盖写，客户端重试无需特殊处理。
+- **乱序安全**：服务端按 `index` 落盘，合并时按序拼接，先传第 3 片再传第 1 片没问题。
+- **合并失败可重试**：缺片时返回 400 并在 `detail` 里列出缺口，补传后重试即可；
+  合并过程用临时文件，中途失败不会留下"看起来完整"的半个文件。
+- **会话会过期**：默认 24 小时，过期后需重新 `init`。
+- **`upload_id` 是服务端生成的 32 位十六进制**，客户端不要自己构造或猜测。
+
+### 与普通上传的关系
+
+`complete` 的返回结构与 `POST /util/file/upload` **完全一致**
+（`filename` / `file_path` / `url` / `file_size` / `mime_type` …），
+客户端处理逻辑不需要分两套。
+
+选择建议：小于 1MB 用普通上传（一次请求更简单），大于 1MB 用分片。
+
+---
+
 ## 8. 数据格式
 
 | 类型 | 约定 |

@@ -15,9 +15,13 @@ ThinkPython 中间件配置
 """
 import time
 import uuid
+from typing import Optional
+
 from fastapi import Request
 from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
+from starlette.datastructures import MutableHeaders
+
 from config.app import APP_CONFIG
 from core.context import bind_request_id
 from helpers.net import get_client_ip
@@ -97,16 +101,84 @@ def _client_ip(request: Request) -> str:
     return get_client_ip(request)
 
 
-async def request_log_middleware(request: Request, call_next):
-    """请求日志中间件 - 记录耗时、追踪 ID，并透传到响应头与错误体
+class RequestLogMiddleware:
+    """请求日志中间件（纯 ASGI 实现）
+
+    记录耗时与追踪 ID，并把 ``X-Request-ID`` 注入响应头。
 
     行为约定：
+
     - **沿用客户端 X-Request-ID**：移动端重试时能串起同一次业务操作；
     - **只在结束时打一条日志**：避免每请求两条日志把生产日志量翻倍；
     - **慢请求单独告警**：超过 ``LOG_SLOW_REQUEST_MS`` 用 WARNING 级别，
       便于直接按级别抓慢接口；
     - **异常也记录**：未捕获异常会带上 request_id 与耗时再抛出，
       由全局异常处理器转成 500。
+
+    为什么是纯 ASGI：``BaseHTTPMiddleware`` 会把响应包进 anyio 内存流逐块转发，
+    每个请求多一次拷贝，且让下游的 GZip 失去尺寸判断能力（详见
+    ``core/auth_middleware.AuthMiddleware`` 的说明）。
+    """
+
+    def __init__(self, app, slow_request_ms: Optional[int] = None):
+        self.app = app
+        self.slow_threshold_ms = (
+            slow_request_ms
+            if slow_request_ms is not None
+            else APP_CONFIG["log"].get("slow_request_ms", 500)
+        )
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        request = Request(scope)
+        request_id = _resolve_request_id(request)
+        client_ip = _client_ip(request)
+
+        # 供控制器与异常处理器读取（Request.state 本身基于 scope["state"]）
+        scope.setdefault("state", {})["request_id"] = request_id
+
+        method = scope.get("method", "")
+        path = scope.get("path", "")
+        # perf_counter 是单调时钟，不受系统时间调整影响，比 time.time 更准
+        start = time.perf_counter()
+        status_code = 500
+
+        async def send_wrapper(message):
+            nonlocal status_code
+            if message["type"] == "http.response.start":
+                status_code = message["status"]
+                # 客户端可据此上报问题，服务端按 ID 检索完整链路
+                MutableHeaders(scope=message)[_REQUEST_ID_HEADER] = request_id
+            await send(message)
+
+        with bind_request_id(request_id, client_ip):
+            try:
+                await self.app(scope, receive, send_wrapper)
+            except Exception:
+                elapsed_ms = (time.perf_counter() - start) * 1000
+                logger.exception(
+                    f"{method} {path} -> 未捕获异常 | "
+                    f"{elapsed_ms:.1f}ms | ip={client_ip} | request_id={request_id}"
+                )
+                raise
+
+            elapsed_ms = (time.perf_counter() - start) * 1000
+            log = logger.warning if elapsed_ms >= self.slow_threshold_ms else logger.info
+            log(
+                f"{method} {path} -> {status_code} | "
+                f"{elapsed_ms:.1f}ms | ip={client_ip} | request_id={request_id}"
+            )
+
+
+async def request_log_middleware(request: Request, call_next):
+    """[兼容保留] 函数式请求日志中间件
+
+    旧代码里的 ``app.middleware("http")(request_log_middleware)`` 仍然可用，
+    但会重新引入 ``BaseHTTPMiddleware`` 的流包装开销。
+    新代码请改用 ``app.add_middleware(RequestLogMiddleware)``。
 
     Args:
         request: FastAPI 请求对象
@@ -121,7 +193,6 @@ async def request_log_middleware(request: Request, call_next):
     # 保留 request.state 上的副本，兼容既有控制器代码的读取习惯
     request.state.request_id = request_id
 
-    # perf_counter 是单调时钟，不受系统时间调整影响，比 time.time 更准
     start = time.perf_counter()
     slow_threshold_ms = APP_CONFIG["log"].get("slow_request_ms", 500)
 

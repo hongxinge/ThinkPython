@@ -80,6 +80,8 @@ ThinkPython 是**为客户端 App / 小程序 / 前端提供 JSON API** 的后�
 | ♻️ **幂等重试** | 客户端带 `Idempotency-Key`，服务端回放首次结果，弱网重试不重复下单 |
 | ⚡ **一键生成客户端 SDK** | `make-client` 从契约生成 TypeScript 客户端，内置刷新/幂等/追踪，见 [SDK 生成](docs/cli.md#make-client---生成客户端-sdk) |
 | 🚀 **响应压缩** | JSON 接口实测省 80% 流量，小响应与图片/视频自动跳过 |
+| 📤 **分片上传** | 大文件切分逐片上传，断线只补缺失分片，见 [分片上传](docs/api-contract.md#72-大文件分片上传) |
+| 🧱 **纯 ASGI 中间件** | 日志/认证/幂等零 `BaseHTTPMiddleware` 开销，单层省约 110µs/请求 |
 | 🔄 **单/多模块切换** | 配置自由切换，小项目用单模块，大项目用多模块 |
 | 🗄️ **多数据库支持** | MySQL / PostgreSQL / SQLite / MSSQL 一键配置 |
 | 💾 **多缓存支持** | Redis（生产）/ Memory（开发）零侵入切换 |

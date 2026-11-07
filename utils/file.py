@@ -198,12 +198,62 @@ class FileUtil:
             >>> FileUtil.generate_subdir("images")
             "images/2024/01/01"
         """
-        category = (category or "files").strip()
-        if not cls.CATEGORY_PATTERN.match(category):
-            raise ValueError(f"非法的上传分类: {category}")
+        category = cls.normalize_category(category)
 
         now = datetime.now()
         return f"{category}/{now.strftime('%Y/%m/%d')}"
+
+    @classmethod
+    def normalize_category(cls, category: Optional[str]) -> str:
+        """校验并归一化上传分类
+
+        分类会参与磁盘路径拼接，必须限制字符集，否则 ``../../evil``
+        这类值会把文件写到上传目录之外。
+
+        Args:
+            category: 原始分类值，None 时回落为 ``files``
+
+        Returns:
+            str: 合法分类名
+
+        Raises:
+            ValueError: 分类含非法字符
+        """
+        value = (category or "files").strip()
+        if not cls.CATEGORY_PATTERN.match(value):
+            raise ValueError(f"非法的上传分类: {value}")
+        return value
+
+    @classmethod
+    def get_mime_type(cls, filename: str) -> str:
+        """按文件名推断 MIME 类型
+
+        Args:
+            filename: 文件名或路径
+
+        Returns:
+            str: MIME 类型，无法识别时返回 ``application/octet-stream``
+        """
+        mime, _ = mimetypes.guess_type(filename)
+        return mime or "application/octet-stream"
+
+    @classmethod
+    def build_url(cls, subdir: str, filename: str) -> str:
+        """构造对外访问 URL
+
+        为什么不直接用磁盘相对路径：容器部署时 ``UPLOAD_DIR`` 通常是挂载卷
+        （如 ``/data/uploads``），相对路径要么拼不出来、要么把服务器绝对路径
+        暴露给客户端。URL 前缀与磁盘位置解耦后，两边可以各自变化。
+
+        Args:
+            subdir: ``generate_subdir`` 产出的分类/日期子目录
+            filename: 文件名
+
+        Returns:
+            str: 形如 ``/uploads/images/2026/11/07/abc.jpg``
+        """
+        prefix = str(UPLOAD_CONFIG.get("url_prefix") or "/uploads").rstrip("/")
+        return f"{prefix}/{subdir}/{filename}"
 
     @classmethod
     def resolve_upload_path(cls, file_path: Union[str, Path]) -> Path:
@@ -401,8 +451,9 @@ class FileUtil:
         )
         
         # 确定上传目录（统一基于项目根，避免受启动时工作目录影响）
+        subdir = cls.generate_subdir(category)
         if upload_dir is None:
-            target_dir = cls.get_upload_root() / cls.generate_subdir(category)
+            target_dir = cls.get_upload_root() / subdir
         else:
             # 允许自定义绝对目录（如容器挂载卷）；相对路径统一以项目根为基准
             candidate = Path(upload_dir)
@@ -442,7 +493,12 @@ class FileUtil:
         await file.seek(0)
         
         # 生成访问 URL
-        url = "/" + relative_path.lstrip("/")
+        # 标准上传目录用「URL 前缀 + 子目录」构造，与磁盘真实位置解耦；
+        # 自定义 upload_dir 无法推断映射关系，退回相对路径（调用方需自行处理）
+        if upload_dir is None:
+            url = cls.build_url(subdir, filename)
+        else:
+            url = "/" + relative_path.lstrip("/")
 
         return {
             "filename": filename,

@@ -182,39 +182,44 @@ def _is_in_global_whitelist(path: str) -> bool:
     return False
 
 
-async def auth_middleware(request: Request, call_next):
-    """全局认证中间件
-    
-    拦截所有请求，根据以下规则决定是否要求认证：
-    1. 全局白名单（config/auth.py 中的 SKIP_AUTH_PATHS）
-    2. 控制器白名单（控制器类中的 SKIP_AUTH_ROUTES）
-    3. 装饰器标记（@skip_auth）
-    
-    如果请求需要认证但 Token 无效，返回 401 错误。
-    如果 Token 有效，将当前用户信息注入到 request.state 中。
-    
+async def _authenticate(scope: dict) -> Optional[JSONResponse]:
+    """执行认证与权限判定（纯 ASGI，不依赖 BaseHTTPMiddleware）
+
+    这是认证逻辑的**唯一实现**，两种中间件入口都复用它：
+
+    - ``AuthMiddleware``（推荐，纯 ASGI）：直接调用，零额外包装；
+    - ``auth_middleware``（兼容旧写法）：函数式入口，内部同样调用本函数。
+
+    判定顺序：
+    1. 全局白名单（``config/auth.py`` 的 ``SKIP_AUTH_PATHS``）
+    2. 控制器白名单（控制器类的 ``SKIP_AUTH_ROUTES``）
+    3. 装饰器标记（``@skip_auth``）
+    4. Token 校验（类型、黑名单、版本号）
+    5. 权限校验（``@require_permission``）
+
     Args:
-        request: FastAPI 请求对象
-        call_next: 下一个处理函数
-        
+        scope: ASGI 连接作用域
+
     Returns:
-        Response: HTTP 响应
+        Optional[JSONResponse]: ``None`` 表示放行；否则为需要直接返回的拒绝响应
     """
+    request = Request(scope)
+
     # 如果全局认证未启用，直接放行
     if not AUTH_ENABLED:
-        return await call_next(request)
-    
+        return None
+
     path = request.url.path
     method = request.method
 
     # 预检请求（OPTIONS）直接放行：
     # 浏览器跨域预检请求不会携带 Token，由外层的 CORS 中间件直接响应
     if method == "OPTIONS":
-        return await call_next(request)
+        return None
 
     # 1. 检查全局白名单
     if _is_in_global_whitelist(path):
-        return await call_next(request)
+        return None
     
     # 2. 检查控制器白名单和装饰器标记
     # 遍历所有路由（展平嵌套路由，兼容 FastAPI 0.141+），查找匹配的路由对象
@@ -241,11 +246,11 @@ async def auth_middleware(request: Request, call_next):
 
             # 检查装饰器标记
             if _is_skip_auth_route(method, full_path, route):
-                return await call_next(request)
+                return None
 
             # 检查控制器白名单
             if _is_in_controller_whitelist(method, full_path, route):
-                return await call_next(request)
+                return None
 
             matched_endpoint = getattr(route, "endpoint", None)
         except (AttributeError, TypeError, ValueError):
@@ -284,15 +289,17 @@ async def auth_middleware(request: Request, call_next):
     if denied is not None:
         return denied
 
-    # Token 验证通过，注入用户信息到请求上下文
-    request.state.current_user = CurrentUser(
+    # Token 验证通过，注入用户信息到请求上下文。
+    # 直接写 scope["state"] 而非 request.state：Request.state 本身就基于
+    # scope["state"]，因此控制器里 request.state.current_user 读取方式完全不变。
+    scope.setdefault("state", {})["current_user"] = CurrentUser(
         user_id=user_id,
         username=payload.get("username"),
         payload=payload,
     )
-    
+
     # 放行请求
-    return await call_next(request)
+    return None
 
 
 def _check_permission(payload: dict, endpoint) -> Optional[JSONResponse]:
@@ -417,3 +424,65 @@ def _paths_match(request_path: str, route_path: str) -> bool:
             return False
 
     return True
+
+
+# ===========================================================================
+# ASGI 中间件入口
+# ===========================================================================
+
+class AuthMiddleware:
+    """全局认证中间件（纯 ASGI 实现）
+
+    为什么不用 ``BaseHTTPMiddleware``：
+
+    Starlette 的函数式中间件（``app.middleware("http")(fn)``）底层是
+    ``BaseHTTPMiddleware``，它会把下游响应包装成一个 anyio 内存流逐块转发。
+    这带来两个实际代价：
+
+    1. **每个请求多一次内存拷贝**：响应体要先写入内存流再由外层读出；
+    2. **破坏压缩的尺寸判断**：GZipMiddleware 只在收到「单次完整 body」时
+       才比较 ``minimum_size``，流式响应会被无条件压缩——实测 87 字节的
+       ``/health`` 被压成 106 字节，越压越大。
+
+    纯 ASGI 实现直接透传 ``send``，没有中间层，响应保持原始形态。
+
+    使用方式::
+
+        app.add_middleware(AuthMiddleware)
+    """
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        denial = await _authenticate(scope)
+        if denial is not None:
+            # JSONResponse 本身就是合法的 ASGI 应用，直接调用即可短路
+            await denial(scope, receive, send)
+            return
+
+        await self.app(scope, receive, send)
+
+
+async def auth_middleware(request: Request, call_next):
+    """[兼容保留] 函数式认证中间件
+
+    旧代码里的 ``app.middleware("http")(auth_middleware)`` 仍然可用，
+    但它会重新引入 ``BaseHTTPMiddleware`` 的流包装开销。
+    新代码请改用 ``app.add_middleware(AuthMiddleware)``。
+
+    Args:
+        request: FastAPI 请求对象
+        call_next: 下游处理函数
+
+    Returns:
+        Response: HTTP 响应
+    """
+    denial = await _authenticate(request.scope)
+    if denial is not None:
+        return denial
+    return await call_next(request)

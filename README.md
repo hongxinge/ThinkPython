@@ -1,7 +1,7 @@
 # ThinkPython
 
 <p align="center">
-  <b>基于 FastAPI 的企业级 Python Web 框架</b><br>
+  <b>基于 FastAPI 的客户端 API 服务端开发框架</b><br>
   <small>像 ThinkPHP 一样简单易用，享受 FastAPI 的高性能</small>
 </p>
 
@@ -19,6 +19,21 @@
   <img src="https://img.shields.io/badge/FastAPI-0.115%2B-green" alt="FastAPI 0.115+">
   <img src="https://img.shields.io/badge/License-MIT-orange" alt="MIT License">
 </p>
+
+---
+
+## 🧭 框架定位（核心设计思想）
+
+**ThinkPython 只做服务端 API 开发框架，专为 API / 客户端服务场景设计——面向客户端 API，而不是管理端 API。**
+
+| 维度 | 说明 |
+|---|---|
+| 产出物 | 供 App、小程序、Web 前端及第三方系统调用的服务端 JSON API |
+| 不做 | 前端页面、管理后台 UI、模板渲染；不生成或维护客户端代码 |
+| 非核心方向 | 菜单级权限、后台批量表格导入导出、运营后台 CRUD 脚手架等管理端能力；业务确需时仅作可选扩展 |
+| 优先级 | 一切架构取舍以「客户端调用」为准：响应契约、双 Token 与刷新、幂等、限流、分页、错误码、请求追踪、弱网与分片上传、缓存与性能 |
+
+该定位是框架的最高约束，新增能力前须通过 [架构决策记录 D0](docs/architecture-decisions.md) 的定位一致性判据。
 
 ---
 
@@ -101,7 +116,7 @@ ThinkPython/
 ├── app/                          # 应用目录（你主要在这里写代码）
 │   ├── common/                   # 公共模块（跨模块共享代码）
 │   ├── single/                   # 单模块模式（默认）
-│   ├── admin/                    # 后台管理模块（多模块）
+│   ├── admin/                    # 存量可选示例模块（非核心方向，见 ADR D0）
 │   └── api/                      # API 模块（多模块）
 ├── config/                       # 配置目录
 ├── core/                         # 核心框架层
@@ -249,6 +264,9 @@ python think.py make-client --lang ts --out client   # 生成 TypeScript 客户�
 MODULE_MODE=multi
 ENABLED_MODULES=admin,api
 ```
+
+> 上例是存量配置值。`admin` 属可选示例模块，不是框架的设计方向（见 [ADR D0](docs/architecture-decisions.md)）；
+> 面向客户端 API 的项目按需只启用 `api` 等业务模块即可。
 
 ### Q: SQLite 数据库文件在哪？
 

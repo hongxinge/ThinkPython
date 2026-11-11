@@ -36,9 +36,11 @@
 | [配置说明](config.md) | 所有配置项的完整说明和默认值 |
 | [部署指南](deploy.md) | 生产环境部署步骤和注意事项 |
 | [API 使用示例](api.md) | 完整的 CRUD API 开发示例 |
-| [架构决策记录](architecture-decisions.md) | 分层边界、响应契约、D1-D6 关键取舍、企业级能力分期 |
+| [架构决策记录](architecture-decisions.md) | **框架定位 D0**：只做服务端 API、面向客户端 API；分层边界、响应契约、D1-D12 关键取舍、企业级能力分期 |
 
 ## 推荐阅读顺序
+
+> 开始之前，先确认 [框架定位（ADR D0）](architecture-decisions.md)：本框架只做服务端 API，面向客户端 API，不是管理端 API 脚手架。
 
 1. 先阅读 **[5 分钟创建第一个 API](getting-started.md)** 了解基本开发流程
 2. 根据需要阅读 **数据库配置** 和 **缓存使用** 了解基础设施配置

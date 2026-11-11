@@ -47,7 +47,23 @@ DB_ENABLED = os.getenv("DB_ENABLED", "True").lower() == "true"
 
 # MySQL / PostgreSQL / MSSQL 连接参数
 DB_HOST = os.getenv("DB_HOST", "127.0.0.1")
-DB_PORT = int(os.getenv("DB_PORT", "3306"))
+
+# 按数据库类型推导默认端口：只在未显式设置 DB_PORT 时生效。
+# 以前恒为 3306，切到 PostgreSQL / SQL Server 不改端口必然连不上。
+_DEFAULT_DB_PORTS = {
+    "mysql": 3306,
+    "mariadb": 3306,
+    "postgresql": 5432,
+    "mssql": 1433,
+}
+
+
+def default_db_port(db_type: str) -> int:
+    """返回该数据库类型的默认端口；未知类型回落到 MySQL 的 3306"""
+    return _DEFAULT_DB_PORTS.get(db_type, 3306)
+
+
+DB_PORT = int(os.getenv("DB_PORT", str(default_db_port(DB_TYPE))))
 DB_NAME = os.getenv("DB_NAME", "thinkpython")
 DB_USER = os.getenv("DB_USER", "root")
 DB_PASSWORD = os.getenv("DB_PASSWORD", "")
@@ -185,6 +201,11 @@ def get_database_url(config: dict = None) -> str:
     - MySQL: mysql+aiomysql://user:pass@host:port/dbname?charset=utf8mb4
     - PostgreSQL: postgresql+asyncpg://user:pass@host:port/dbname
     - MSSQL: mssql+aioodbc://user:pass@host:port/dbname?driver=...
+
+    账号与密码通过 ``sqlalchemy.engine.URL.create`` 构造，特殊字符会被自动
+    percent-encode（例如 ``P@ss/2026`` → ``P%40ss%2F2026``），避免 ``@``
+    把连接串截断。SQLite 例外：它没有账号密码，且 URL.create 会把 Windows
+    盘符冒号与 ``:memory:`` 编码成 ``%3A`` 导致连不上，因此保持路径拼接。
     
     Args:
         config: 自定义配置字典，不传则使用默认的 DATABASE_CONFIG
@@ -212,16 +233,36 @@ def get_database_url(config: dict = None) -> str:
     db_type = cfg["type"]
     
     if db_type == "sqlite":
-        # SQLite 使用 aiosqlite 异步驱动，/// 表示绝对路径
+        # SQLite 使用 aiosqlite 异步驱动，/// 表示绝对路径。
+        # 不走 URL.create：它会把 G: 与 :memory: 里的冒号编码成 %3A。
         return f"sqlite+aiosqlite:///{cfg['sqlite_path']}"
-    elif db_type == "mysql":
-        # MySQL 使用 aiomysql 异步驱动
-        return f"mysql+aiomysql://{cfg['username']}:{cfg['password']}@{cfg['host']}:{cfg['port']}/{cfg['database']}?charset={cfg['charset']}"
+
+    # 先校验类型，避免未知类型在读取账号字段时抛 KeyError 而不是明确的 ValueError
+    if db_type not in ("mysql", "postgresql", "mssql"):
+        raise ValueError(f"Unsupported database type: {db_type}")
+
+    # 延迟导入，保持 config 模块在极简环境（CLI 帮助、文档生成）下可独立导入
+    from sqlalchemy.engine import URL
+
+    common = {
+        "username": cfg["username"],
+        "password": cfg["password"],
+        "host": cfg["host"],
+        "port": int(cfg["port"]),
+        "database": cfg["database"],
+    }
+
+    if db_type == "mysql":
+        url = URL.create("mysql+aiomysql", query={"charset": cfg["charset"]}, **common)
     elif db_type == "postgresql":
-        # PostgreSQL 使用 asyncpg 异步驱动
-        return f"postgresql+asyncpg://{cfg['username']}:{cfg['password']}@{cfg['host']}:{cfg['port']}/{cfg['database']}"
+        url = URL.create("postgresql+asyncpg", **common)
     elif db_type == "mssql":
-        # SQL Server 使用 aioodbc 异步驱动，需要指定 ODBC Driver
-        return f"mssql+aioodbc://{cfg['username']}:{cfg['password']}@{cfg['host']}:{cfg['port']}/{cfg['database']}?driver=ODBC+Driver+17+for+SQL+Server"
+        url = URL.create(
+            "mssql+aioodbc",
+            query={"driver": "ODBC Driver 17 for SQL Server"},
+            **common,
+        )
     else:
         raise ValueError(f"Unsupported database type: {db_type}")
+
+    return url.render_as_string(hide_password=False)

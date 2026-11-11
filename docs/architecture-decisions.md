@@ -397,6 +397,20 @@ SQLite 的默认配置不适合并发服务：`foreign_keys` 默认 **OFF**（�
 - 数据库支持等级核查结论见 `docs/database.md`「支持矩阵」：SQLite / MySQL 为一等，
   PostgreSQL 为二等，SQL Server 为三等；发现的 6 项缺口已列明证据与规避方式。
 
+### Wave 9 补充落地（2026-11-11：数据库链路加固）
+
+- **P0 修复**：`get_database_url()` 对 MySQL / PostgreSQL / MSSQL 改用 `URL.create()`，
+  账号与密码自动 percent-encode（实测 `P@ss/2026`、`a:b#c%d`、中文密码在异步 URL
+  与同步迁移 URL 中均原样还原）；SQLite 保持路径拼接，避免盘符冒号与 `:memory:` 被编码。
+  新增 `default_db_port()`，`DB_PORT` 缺省按 `DB_TYPE` 推导（3306 / 5432 / 1433）。
+- **P1 补齐**：`psycopg2-binary>=2.9.9` 纳入 `requirements-prod.txt`，本机实测
+  `postgresql+psycopg2` 引擎可加载；`pyodbc` 保持可选（仍需系统 ODBC Driver，且未实机验证）。
+- **P2 测试**：新增 `tests/test_database_matrix.py`（27 项离线通过 + 1 项可选真实连接集成）。
+  离线覆盖四种方言 DDL 编译、密码还原、默认端口与同步驱动映射；集成测试由
+  `TP_TEST_DATABASE_URL` 显式启用，只做 `SELECT 1`，不建表不写数据，**不引入 Docker**。
+- **契约不变**：`DATABASE_URL` 仍优先于 `get_database_url(config)` 的自定义参数，
+  遵循第 9 节「核心契约不得在 1.x 内二次变更」。
+
 ---
 
 ## 9. 变更纪律

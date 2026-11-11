@@ -153,7 +153,7 @@ DEFAULT_MODULE=api
 | `DB_ENABLED` | 是否启用数据库 | `True` |
 | `DB_TYPE` | 数据库类型 | `sqlite` |
 | `DB_HOST` | 数据库主机 | `127.0.0.1` |
-| `DB_PORT` | 数据库端口 | `3306` |
+| `DB_PORT` | 数据库端口（缺省按 `DB_TYPE` 推导：MySQL 3306 / PostgreSQL 5432 / MSSQL 1433） | 随类型 |
 | `DB_NAME` | 数据库名称 | `thinkpython` |
 | `DB_USER` | 数据库用户名 | `root` |
 | `DB_PASSWORD` | 数据库密码 | `` |

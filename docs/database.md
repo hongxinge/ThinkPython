@@ -9,24 +9,24 @@ ThinkPython 通过 `.env` 切换数据库方言。下表是 **2026-11-11 代码�
 |---|---|---|---|---|---|
 | SQLite | **一等**：默认形态，单机生产可用 | `aiosqlite` | 标准库 `pysqlite` | ✅ | 框架已开启 WAL / `synchronous=NORMAL` / 外键 / `busy_timeout`（`core/database.py`）；单写者模型 |
 | MySQL 8 | **一等**：推荐生产库 | `aiomysql` | `pymysql`（aiomysql 传递依赖） | ✅ | `utf8mb4`；用 `deploy/mysql-init.sql` 初始化字符集与账号 |
-| PostgreSQL | **二等**：可跑通，需两步手工配置 | `asyncpg` | `psycopg2` | 异步已装 / **同步未装** | 必须改 `DB_PORT=5432`；迁移前 `pip install psycopg2-binary` |
+| PostgreSQL | **二等**：代码链路已打通，缺实机验证 | `asyncpg` | `psycopg2` | 异步 ✅（`requirements.txt`）/ 同步 ✅（`requirements-prod.txt`） | 生产安装 `requirements-prod.txt` 即可；默认端口已随 `DB_TYPE` 推导为 5432；仍缺真实连接集成测试与初始化脚本 |
 | SQL Server | **三等**：条件支持，未实机验证 | `aioodbc` | `pyodbc` | **均未装** | 需系统安装 ODBC Driver 17/18；Linux 额外装微软驱动；`requirements.txt` 中仍是注释 |
 | MariaDB | 未正式支持 | — | `mariadb+pymysql`（仅有映射） | — | `DB_TYPE` 不识别 `mariadb`；只能用 `DATABASE_URL`，且无实测 |
 
 判定依据：
 
 - 方言与驱动映射：`config/database.py` 的 `_SYNC_DRIVER_MAP` / `get_sync_database_url()` / `get_database_url()`；
-- 依赖声明：`requirements.txt`（`aiomysql`/`asyncpg`/`aiosqlite` 为必需，`aioodbc`/`pyodbc` 为注释）、`requirements-prod.txt`；
+- 依赖声明：`requirements.txt`（`aiomysql`/`asyncpg`/`aiosqlite` 为必需，`aioodbc`/`pyodbc` 为注释）；`requirements-prod.txt` 已把 `psycopg2-binary` 纳入生产默认依赖，`pyodbc` 仍为可选；
 - 迁移链路：`alembic/env.py` 用 `get_sync_database_url()` 转同步驱动，仅 SQLite 启用 `render_as_batch`；
-- 本机 `.venv` 实测：`aiosqlite` / `aiomysql` / `pymysql` / `asyncpg` 已装，`psycopg2` / `aioodbc` / `pyodbc` / `asyncmy` 未装；
-- 测试覆盖：336 项测试中，与数据库相关的断言集中在 URL 字符串生成与内存 SQLite，**没有**对 MySQL / PostgreSQL / MSSQL 的真实连接集成测试。
+- 本机 `.venv` 实测：`aiosqlite` / `aiomysql` / `pymysql` / `asyncpg` / `psycopg2`(2.9.13) 已装，`aioodbc` / `pyodbc` / `asyncmy` 未装；已实测 `postgresql+psycopg2` 引擎可正常加载；
+- 测试覆盖：新增 `tests/test_database_matrix.py`，离线覆盖密码 percent-encode 还原、按类型默认端口、同步驱动映射与四种方言的 DDL 编译；真实连接集成测试需显式启用（见下文），默认跳过。
 
 ## 已知缺口与规避方式
 
 | 缺口 | 证据 | 规避方式 |
 |---|---|---|
-| 默认端口恒为 `3306` | `config/database.py` 的 `DB_PORT` | 切 PG 显式写 `DB_PORT=5432`，MSSQL 写 `1433` |
-| 密码含 `@` 会被截断（实测 `P@ss/2026` → `P`） | `config/database.py:get_database_url()` 用 f-string 拼接，未做 percent-encode | 改用 `DATABASE_URL` 并手工转义特殊字符，或密码只用字母数字 |
+| ~~默认端口恒为 3306~~ **已修复（2026-11-11）** | `config/database.py:default_db_port()` | 按 `DB_TYPE` 推导（MySQL 3306 / PostgreSQL 5432 / MSSQL 1433），仍可用 `DB_PORT` 显式覆盖 |
+| ~~密码含 `@` 被截断~~ **已修复（2026-11-11）** | `config/database.py:get_database_url()` | MySQL/PG/MSSQL 改用 `URL.create()` 自动 percent-encode；实测 `P@ss/2026`、`a:b#c%d`、中文密码在异步 URL 与同步迁移 URL 中均可原样还原 |
 | `DATABASE_URL` 会覆盖 `get_database_url(config)` 的自定义参数 | `config/database.py:get_database_url()` 开头的 `DATABASE_URL` 分支 | 需要多套配置时不要设置该环境变量 |
 | 表 / 字段注释反射仅 MySQL | `core/inspector.py` 的 `_get_table_comment()` / `get_column_comments_mysql()` | 其他库下 `make-crud` 生成的注释为空（降级，不影响建表） |
 | `DB_CHARSET` 仅 MySQL 生效 | `config/database.py:get_database_url()` 的 mysql 分支 | PG / MSSQL 下为死配置，可忽略 |
@@ -34,6 +34,18 @@ ThinkPython 通过 `.env` 切换数据库方言。下表是 **2026-11-11 代码�
 
 > 按 ADR D0 的定位判据，新增数据库支持只有在服务客户端 API 请求链路时才进入核心路线；
 > Oracle / 达梦 / 人大金仓等政企库属于管理端与合规场景，不作为框架的演进方向。
+
+## 验证外部数据库（可选，不需要 Docker）
+
+默认测试不连接任何外部库。若在已安装 MySQL / PostgreSQL 的机器上要做真实连接验证：
+
+```bash
+TP_TEST_DATABASE_URL=mysql+aiomysql://user:pwd@127.0.0.1:3306/demo \
+    .venv/Scripts/python.exe -m pytest tests/test_database_matrix.py -m integration
+```
+
+集成测试同时验证「异步应用链路」与「同步迁移链路」的 `SELECT 1`，
+**不建表、不写数据**，不会污染目标库；未设置该环境变量时自动跳过。
 
 ## 配置文件
 

@@ -2,19 +2,25 @@
 #
 # 与 requirements.txt 的区别：
 #   requirements.txt      开发与运行都需要的核心依赖（跨平台，Windows 可装）
-#   requirements-prod.txt 仅 Linux 生产环境需要的进程管理组件
+#   requirements-prod.txt 生产环境补充依赖：进程管理器 + 数据库迁移同步驱动
 #
 # 安装方式：
 #   pip install -r requirements.txt -r requirements-prod.txt
 #
-# 注意：gunicorn 不支持 Windows（无 fcntl），Windows 开发环境不要安装本文件。
-# Windows 本地开发直接用 `python think.py run` 或 uvicorn 即可。
+# 注意：gunicorn 不支持 Windows（无 fcntl），Windows 开发环境不要整份安装本文件。
+# Windows 本地开发直接用 `python think.py run` 或 uvicorn 即可；
+# 若需在 Windows 上对 PostgreSQL 执行 `think.py db-migrate`，
+# 单独执行 `pip install psycopg2-binary`。
 
 # ASGI 进程管理器：多 worker、优雅重启、worker 超时自动回收
 gunicorn>=23.0.0
 
-# PostgreSQL 同步驱动（Alembic 迁移需要；使用 MySQL/SQLite 时可不装）
-# psycopg2-binary>=2.9.9
+# PostgreSQL 同步驱动：Alembic 迁移在同步上下文中运行，必须用它。
+# 默认纳入生产依赖，让 PostgreSQL 的「启动 + 迁移」链路开箱可用；
+# 仅使用 SQLite / MySQL / SQL Server 时该包不会被 import，无运行时代价。
+psycopg2-binary>=2.9.9
 
-# MSSQL 同步驱动（Alembic 迁移需要；仅使用 MSSQL 时安装）
+# MSSQL 同步驱动：保持可选。装了 pyodbc 仍需操作系统级 ODBC Driver 17/18，
+# 且本项目未做 SQL Server 实机验证，不把它变成所有生产用户的默认负担。
+# 需要时手动安装：pip install pyodbc aioodbc
 # pyodbc>=5.1.0

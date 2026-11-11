@@ -24,9 +24,9 @@
 
 并发说明：
     同一 ``upload_id`` 的分片写入是"写临时文件 + 原子替换"，重复上传同一分片
-    是幂等的。但 ``complete`` 未加跨进程锁，同一会话被并发 complete 时可能
-    都执行合并。客户端应避免并发 complete（重试前先查 status），强一致场景
-    可在外层加分布式锁。
+    是幂等的。``complete`` 使用跨进程文件锁（原子目录创建）互斥：并发提交时
+    后到者会收到 ``ChunkedUploadError``，不会重复合并、不会留下两个目标文件。
+    客户端重试前应先查询 status 确认结果。
 """
 
 from __future__ import annotations
@@ -37,8 +37,9 @@ import re
 import shutil
 import time
 import uuid
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterator, List, Optional
 
 from fastapi import UploadFile
 
@@ -53,6 +54,11 @@ _IO_BLOCK = 1024 * 1024
 
 # meta 文件名
 _META_NAME = "meta.json"
+
+# complete 互斥锁目录与陈旧锁判定阈值（秒）
+# 用「目录创建」而不是 fcntl：Windows / Linux 都原子，且不引入第三方依赖。
+_LOCK_DIR_NAME = ".locks"
+_COMPLETE_LOCK_TTL = 300
 
 
 class ChunkedUploadError(ValueError):
@@ -158,7 +164,8 @@ class ChunkedUploadManager:
         now = time.time()
         removed = 0
         for entry in root.iterdir():
-            if not entry.is_dir():
+            if not entry.is_dir() or entry.name == _LOCK_DIR_NAME:
+                # .locks 是 complete 互斥锁目录，不是上传会话，不能按会话 TTL 删除
                 continue
             meta_file = entry / _META_NAME
             try:
@@ -361,18 +368,66 @@ class ChunkedUploadManager:
             "completed": len(meta["received"]) == total_chunks,
         }
 
+    @staticmethod
+    @contextmanager
+    def _complete_lock(upload_id: str) -> Iterator[None]:
+        """同一 ``upload_id`` 的 complete 跨进程互斥
+
+        ``os.mkdir`` 在 Windows 与 Linux 上都是原子操作，用它做锁比 fcntl 更可移植，
+        也不需要 Redis。锁带 TTL：进程崩溃后超过 300 秒自动视为陈旧锁并清理，
+        避免永久死锁；同一会话被并发 complete 时，后到者收到业务异常而非重复合并。
+        """
+        lock_root = ChunkedUploadManager._chunk_root() / _LOCK_DIR_NAME
+        lock_root.mkdir(parents=True, exist_ok=True)
+        lock_path = lock_root / f"{upload_id}.lock"
+        busy_msg = "该上传任务正在合并，请勿重复提交 complete；请查询 status 确认结果"
+        acquired = False
+
+        try:
+            try:
+                lock_path.mkdir()
+                acquired = True
+            except FileExistsError:
+                try:
+                    age = time.time() - lock_path.stat().st_mtime
+                except OSError:
+                    age = 0.0  # 锁恰好被另一个进程释放，按占用处理
+                if age > _COMPLETE_LOCK_TTL:
+                    shutil.rmtree(lock_path, ignore_errors=True)
+                    try:
+                        lock_path.mkdir()
+                    except FileExistsError:
+                        raise ChunkedUploadError(busy_msg) from None
+                    acquired = True
+                else:
+                    raise ChunkedUploadError(busy_msg)
+            yield
+        finally:
+            if acquired:
+                # 忽略已删除的情况：陈旧锁清理与正常释放可能并发
+                shutil.rmtree(lock_path, ignore_errors=True)
+
     @classmethod
     def complete(cls, upload_id: str) -> Dict[str, Any]:
-        """合并所有分片为最终文件
+        """合并所有分片为最终文件（跨进程互斥）
 
         合并走流式拷贝，内存占用与文件大小无关；合并完成后删除整个会话目录。
+        同一 ``upload_id`` 并发 complete 时，后到者直接收到 ``ChunkedUploadError``，
+        客户端可查询 status 或直接使用先到者的结果，不会破坏已合并文件。
 
         Returns:
             Dict: 与 ``FileUtil.upload`` 一致的结构，客户端处理方式无需区分
 
         Raises:
-            ChunkedUploadError: 会话无效或分片缺失
+            ChunkedUploadError: 会话无效、分片缺失，或已有合并正在进行
         """
+        with cls._complete_lock(upload_id):
+            # 锁内重新读取会话：另一个 complete 可能刚刚合并并销毁了会话目录
+            return cls._complete_locked(upload_id)
+
+    @classmethod
+    def _complete_locked(cls, upload_id: str) -> Dict[str, Any]:
+        """实际合并逻辑；调用方必须持有 ``_complete_lock``"""
         meta = cls._require_session(upload_id)
         total_chunks = meta["total_chunks"]
 

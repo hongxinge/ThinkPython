@@ -39,10 +39,10 @@ from typing import List, Optional
 from pathlib import Path
 
 from fastapi import UploadFile, File, HTTPException, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from core.base_controller import BaseController
-from core.schema import ApiResponse
+from core.schema import ApiResponse, EmptyData
 from utils.chunked_upload import ChunkedUploadError, ChunkedUploadManager
 from utils.excel import ExcelUtil
 from utils.file import FileUtil, IMAGE_EXTENSIONS, DOCUMENT_EXTENSIONS
@@ -117,6 +117,41 @@ class ChunkedAbortData(BaseModel):
 
     upload_id: str = Field(..., description="会话 ID")
     aborted: bool = Field(..., description="是否已清理")
+
+
+class UploadResultItem(BaseModel):
+    """批量上传中的单个结果；成功项含文件信息，失败项只有 filename 与 error"""
+
+    model_config = ConfigDict(extra="allow")
+
+    filename: str = Field(..., description="原始文件名")
+    original_filename: Optional[str] = Field(None, description="服务端保存名")
+    file_path: Optional[str] = Field(None, description="相对路径")
+    absolute_path: Optional[str] = Field(None, description="服务端绝对路径")
+    file_size: Optional[int] = Field(None, description="文件字节数")
+    mime_type: Optional[str] = Field(None, description="MIME 类型")
+    extension: Optional[str] = Field(None, description="扩展名")
+    url: Optional[str] = Field(None, description="访问 URL")
+    error: Optional[str] = Field(None, description="失败原因；成功时为 null")
+
+
+class MultiUploadData(BaseModel):
+    """批量上传汇总"""
+    total: int = Field(..., description="提交文件数")
+    success: int = Field(..., description="成功数")
+    failed: int = Field(..., description="失败数")
+    files: List[UploadResultItem] = Field(default_factory=list, description="逐文件结果")
+
+
+class FileInfoData(BaseModel):
+    """文件信息（GET /util/file/info）"""
+    filename: str = Field(..., description="文件名")
+    exists: bool = Field(..., description="文件是否存在")
+    file_size: Optional[int] = Field(None, description="文件字节数")
+    mime_type: Optional[str] = Field(None, description="MIME 类型")
+    extension: Optional[str] = Field(None, description="扩展名")
+    created_at: Optional[str] = Field(None, description="创建时间")
+    updated_at: Optional[str] = Field(None, description="修改时间")
 
 
 def _resolve_upload_path(file_path: str) -> Path:
@@ -262,7 +297,7 @@ class UtilController(BaseController):
         # ==============================
         
         # 单文件上传
-        @self.router.post("/util/file/upload", summary="单文件上传")
+        @self.router.post("/util/file/upload", summary="单文件上传", response_model=ApiResponse[ChunkedCompleteData])
         async def upload_file(
             file: UploadFile = File(...),
             category: str = Query("files", description="文件分类: images/documents/files")
@@ -307,7 +342,7 @@ class UtilController(BaseController):
                 raise HTTPException(status_code=400, detail=str(e))
         
         # 多文件上传
-        @self.router.post("/util/file/upload-multiple", summary="多文件上传")
+        @self.router.post("/util/file/upload-multiple", summary="多文件上传", response_model=ApiResponse[MultiUploadData])
         async def upload_multiple_files(
             files: List[UploadFile] = File(...),
             category: str = Query("files", description="文件分类")
@@ -514,7 +549,7 @@ class UtilController(BaseController):
         # ==============================
         
         # 文件信息
-        @self.router.get("/util/file/info", summary="获取文件信息")
+        @self.router.get("/util/file/info", summary="获取文件信息", response_model=ApiResponse[FileInfoData])
         async def get_file_info(
             file_path: str = Query(..., description="文件路径")
         ):
@@ -536,7 +571,7 @@ class UtilController(BaseController):
             return self.success(data=info)
         
         # 文件删除
-        @self.router.delete("/util/file/delete", summary="删除文件")
+        @self.router.delete("/util/file/delete", summary="删除文件", response_model=ApiResponse[EmptyData])
         async def delete_file(
             file_path: str = Query(..., description="文件路径")
         ):

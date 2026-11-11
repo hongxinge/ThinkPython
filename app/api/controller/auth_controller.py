@@ -29,7 +29,7 @@ from pydantic import BaseModel, Field
 from fastapi import Depends, Request
 
 from core.base_controller import BaseController
-from core.schema import ApiResponse
+from core.schema import ApiResponse, EmptyData
 from app.common.controller.base_auth_controller import BaseAuthController
 from helpers.auth import (
     CurrentUser,
@@ -135,6 +135,24 @@ class RegisterData(BaseModel):
     """注册成功的业务数据"""
     user_id: int = Field(..., description="新用户 ID")
     username: str = Field(..., description="用户名")
+
+
+class ProfileData(BaseModel):
+    """个人信息（GET /auth/profile）"""
+    user_id: int = Field(..., description="用户 ID")
+    username: str = Field(..., description="用户名")
+    email: str = Field(..., description="邮箱")
+    nickname: Optional[str] = Field(None, description="昵称")
+    status: Optional[int] = Field(None, description="状态：0 禁用 / 1 启用")
+    created_at: Optional[str] = Field(None, description="创建时间，ISO 8601")
+
+
+class UpdateProfileData(BaseModel):
+    """修改个人信息的结果（PUT /auth/profile）"""
+    user_id: int = Field(..., description="用户 ID")
+    username: str = Field(..., description="用户名")
+    email: str = Field(..., description="邮箱")
+    nickname: Optional[str] = Field(None, description="昵称")
 
 
 class AuthController(BaseAuthController):
@@ -313,7 +331,7 @@ class AuthController(BaseAuthController):
         # 免验证接口（方式3：装饰器标记）
         # ==============================
         
-        @self.router.post("/auth/forgot-password", summary="忘记密码", response_model=dict)
+        @self.router.post("/auth/forgot-password", summary="忘记密码", response_model=ApiResponse[EmptyData])
         @skip_auth
         async def forgot_password(
             data: ForgotPasswordRequest,
@@ -344,7 +362,7 @@ class AuthController(BaseAuthController):
         # 需要认证的接口（自动拦截，无需装饰器）
         # ==============================
         
-        @self.router.get("/auth/profile", summary="获取个人信息", response_model=dict)
+        @self.router.get("/auth/profile", summary="获取个人信息", response_model=ApiResponse[ProfileData])
         async def get_profile(
             request: Request,
             db: AsyncSession = Depends(get_db),
@@ -378,7 +396,7 @@ class AuthController(BaseAuthController):
                 "created_at": db_user.created_at.isoformat() if db_user.created_at else None,
             })
         
-        @self.router.put("/auth/profile", summary="修改个人信息", response_model=dict)
+        @self.router.put("/auth/profile", summary="修改个人信息", response_model=ApiResponse[UpdateProfileData])
         async def update_profile(
             data: UpdateProfileRequest,
             request: Request,
@@ -422,7 +440,7 @@ class AuthController(BaseAuthController):
                 message="修改成功",
             )
         
-        @self.router.post("/auth/change-password", summary="修改密码", response_model=dict)
+        @self.router.post("/auth/change-password", summary="修改密码", response_model=ApiResponse[EmptyData])
         async def change_password(
             data: ChangePasswordRequest,
             request: Request,

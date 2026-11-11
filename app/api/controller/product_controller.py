@@ -18,8 +18,30 @@ API 设计规范：
 - 统一的响应格式：{"code": 200, "message": "success", "data": ...}
 - 错误时使用标准 HTTP 状态码
 """
+from typing import List
+
+from pydantic import BaseModel, Field
+
 from core.base_controller import BaseController
+from core.schema import ApiResponse
 from helpers.response import success_response
+
+
+class ProductItem(BaseModel):
+    """产品条目"""
+    id: int = Field(..., description="产品 ID")
+    name: str = Field(..., description="产品名称")
+
+
+class ProductListData(BaseModel):
+    """产品列表数据"""
+    items: List[ProductItem] = Field(default_factory=list, description="当前页产品")
+    total: int = Field(default=0, description="总记录数")
+
+
+class ProductData(ProductItem):
+    """产品详情"""
+    pass
 
 
 class ProductController(BaseController):
@@ -52,7 +74,7 @@ class ProductController(BaseController):
         """初始化路由配置"""
         
         # 获取产品列表接口
-        @self.router.get("/product/list", summary="产品列表")
+        @self.router.get("/product/list", summary="产品列表", response_model=ApiResponse[ProductListData])
         async def get_products(category_id: int = 0, page: int = 1, page_size: int = 10):
             """获取产品列表，支持按分类筛选和分页查询
             
@@ -75,7 +97,7 @@ class ProductController(BaseController):
             })
         
         # 获取产品详情接口
-        @self.router.get("/product/{product_id}", summary="产品详情")
+        @self.router.get("/product/{product_id}", summary="产品详情", response_model=ApiResponse[ProductData])
         async def get_product(product_id: int):
             """根据产品 ID 获取产品详细信息
             

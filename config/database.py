@@ -65,6 +65,10 @@ DB_SQLITE_PATH = os.getenv("DB_SQLITE_PATH", str(Path(__file__).resolve().parent
 DB_CHARSET = os.getenv("DB_CHARSET", "utf8mb4")
 DB_ECHO = os.getenv("DB_ECHO", "False").lower() == "true"
 
+# 慢 SQL 阈值（毫秒）：超过该耗时的 SQL 以 WARNING 级别记录，附带 request_id。
+# 0 表示关闭。只记录语句与耗时，不记录参数，避免把密码、Token 写进日志。
+DB_SLOW_QUERY_MS = int(os.getenv("DB_SLOW_QUERY_MS", "500"))
+
 
 # ==============================
 # 兼容旧接口：DATABASE_CONFIG 字典
@@ -87,6 +91,7 @@ DATABASE_CONFIG = {
     "sqlite_path": DB_SQLITE_PATH,
     "charset": DB_CHARSET,
     "echo": DB_ECHO,
+    "slow_query_ms": DB_SLOW_QUERY_MS,
 }
 
 

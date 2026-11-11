@@ -153,6 +153,22 @@ HTTP/1.1 403 Forbidden
 
 ## 4. 响应结构
 
+### 4.0 OpenAPI 的类型精度（客户端 SDK 相关）
+
+业务接口统一声明 `response_model=ApiResponse[T]`，OpenAPI 会生成 `ApiResponse_LoginData_`
+这类具名模型，`data` 的字段能被 SDK 生成器识别为强类型，而不是 `unknown`。
+
+当前 30 个 OpenAPI 操作中 **23 个为精确模型**，其余 7 个刻意不套响应包装：
+
+| 类别 | 接口 | 原因 |
+|---|---|---|
+| 文件流 | `GET /api/util/file/download`、`/preview` | 返回二进制文件，不是 JSON 契约 |
+| 存活探针 | `GET /health`、`/health/ready` | 供负载均衡探活，不是业务接口 |
+| 管理端示例 | `POST /api/util/excel/import*`、`/export` | 按 ADR D0，管理端能力不作为核心契约演进方向 |
+
+> **注意**：声明响应模型后 FastAPI 会按模型过滤字段。若出现「服务端返回了、客户端收不到」，
+> 先检查该接口的 data 模型定义；新增字段必须同步更新模型，否则会被静默丢弃。
+
 ### 4.1 成功
 
 ```json

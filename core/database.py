@@ -27,10 +27,16 @@ ThinkPython 数据库连接管理
         result = await db.execute(select(User))
         return result.scalars().all()
 """
-from typing import AsyncGenerator
+import time
+from typing import AsyncGenerator, Optional
+
+from loguru import logger
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import declarative_base
-from config.database import DATABASE_CONFIG, DATABASE_URL, get_database_url
+
+from config.database import DATABASE_CONFIG, DATABASE_URL, DB_SLOW_QUERY_MS, get_database_url
+from core.context import get_request_id
 
 # 全局数据库引擎实例，负责管理连接池和执行 SQL 语句
 engine = None
@@ -71,6 +77,48 @@ def _enable_sqlite_pragmas(engine) -> None:
             cursor.execute("PRAGMA busy_timeout=5000")
         finally:
             cursor.close()
+
+
+def install_slow_query_logging(engine, threshold_ms: Optional[int] = None, sink=None) -> None:
+    """为引擎注册慢 SQL 监听（SQLAlchemy 事件，无侵入）
+
+    在 ``before_cursor_execute`` / ``after_cursor_execute`` 之间计时，超过阈值时
+    以 WARNING 级别记录耗时、request_id 与截断后的 SQL。记录语句而不记录参数，
+    避免把密码、手机号、Token 等敏感值写进日志。
+
+    Args:
+        engine: SQLAlchemy 引擎（同步或异步均可，事件挂在 ``sync_engine`` 上）
+        threshold_ms: 阈值（毫秒）；不传则读 ``DB_SLOW_QUERY_MS``，<= 0 表示关闭
+        sink: 可注入的日志接收函数，便于单元测试；默认 ``logger.warning``
+
+    说明：计时栈存在 ``Connection.info`` 里，与单个 Connection 生命周期绑定，
+    连接池复用 DBAPI 连接时不会把上一请求的计时带过来。
+    """
+    threshold = DB_SLOW_QUERY_MS if threshold_ms is None else threshold_ms
+    if threshold <= 0:
+        return
+    emit = sink or logger.warning
+    key = "_tp_sql_start"
+    # 异步引擎有 sync_engine；同步引擎（测试/脚本）直接用自身
+    target = getattr(engine, "sync_engine", engine)
+
+    @event.listens_for(target, "before_cursor_execute")
+    def _before(conn, cursor, statement, parameters, context, executemany):  # noqa: ANN001, ARG001
+        conn.info.setdefault(key, []).append(time.perf_counter())
+
+    @event.listens_for(target, "after_cursor_execute")
+    def _after(conn, cursor, statement, parameters, context, executemany):  # noqa: ANN001, ARG001
+        starts = conn.info.get(key)
+        if not starts:
+            return
+        elapsed_ms = (time.perf_counter() - starts.pop()) * 1000
+        if elapsed_ms < threshold:
+            return
+        sql = " ".join(statement.split())[:300]
+        emit(
+            f"slow_sql | {elapsed_ms:.1f}ms | "
+            f"request_id={get_request_id() or '-'} | {sql}"
+        )
 
 
 async def init_database():
@@ -123,6 +171,9 @@ async def init_database():
             echo=DATABASE_CONFIG["echo"],  # 是否打印 SQL 语句
         )
     
+    # 慢 SQL 监听与方言无关，SQLite / MySQL / PostgreSQL / MSSQL 统一生效
+    install_slow_query_logging(engine)
+
     # 创建异步会话工厂
     # async_sessionmaker 是会话的工厂类，每次调用都会创建新的 AsyncSession
     async_session = async_sessionmaker(

@@ -163,6 +163,7 @@ DEFAULT_MODULE=api
 | `DB_POOL_RECYCLE` | 连接回收时间(秒) | `3600` |
 | `DB_POOL_PRE_PING` | 连接前检测 | `True` |
 | `DB_ECHO` | 打印SQL语句 | `False` |
+| `DB_SLOW_QUERY_MS` | 慢 SQL 阈值（毫秒），超过即 WARNING 记录；`0` 关闭 | `500` |
 
 ### MySQL配置示例
 

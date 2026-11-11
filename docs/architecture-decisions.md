@@ -382,6 +382,23 @@ SQLite 的默认配置不适合并发服务：`foreign_keys` 默认 **OFF**（�
 
 ---
 
+### Wave 8 补充落地（2026-11-11：客户端契约、弱网合并、可观测）
+
+- **响应契约收敛**：认证 4 个、产品 2 个、文件 JSON 4 个接口接入 `ApiResponse[T]`，
+  OpenAPI 精确响应模型由 13/30 提升到 **23/30**。Excel 导入导出（管理端示例）、
+  文件下载/预览（二进制流）、health 探针（非业务契约）按 D0 判定**不纳入**核心契约。
+- **分片 complete 互斥**：`utils/chunked_upload.py` 新增跨进程目录锁（原子 `mkdir`，
+  300 秒陈旧锁清理，不依赖 fcntl/Redis）；并发 complete 恰好一个成功，
+  `_cleanup_expired` 显式跳过 `.locks` 目录。
+- **慢 SQL 日志**：`core/database.py:install_slow_query_logging()` 基于 SQLAlchemy 事件，
+  阈值 `DB_SLOW_QUERY_MS`（默认 500 ms，`0` 关闭）对所有方言一致生效；
+  记录耗时、`request_id` 与截断 SQL，**不记录参数值**。
+- 新增 `tests/test_wave8.py`（9 项），全量测试 **336 passed**。
+- 数据库支持等级核查结论见 `docs/database.md`「支持矩阵」：SQLite / MySQL 为一等，
+  PostgreSQL 为二等，SQL Server 为三等；发现的 6 项缺口已列明证据与规避方式。
+
+---
+
 ## 9. 变更纪律
 
 1. **破坏性变更**必须：升次版本号、写 CHANGELOG、提供兼容开关、在本文档记录回退方式。
